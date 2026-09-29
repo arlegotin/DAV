@@ -30,11 +30,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     collect.add_argument("--dry-run", action="store_true")
     collect.add_argument("--config", type=Path, default=REPO_ROOT / "config.toml")
     collect.add_argument("--run-dir", type=Path, default=Path("runs/m2"))
+    evaluate = commands.add_parser("evaluate", help="Score the M2 development-only pilot")
+    evaluate.add_argument("--stage", choices=("pilot", "dev", "test"), required=True)
+    evaluate.add_argument("--config", type=Path, default=REPO_ROOT / "config.toml")
+    evaluate.add_argument("--run-dir", type=Path, default=Path("runs/m2"))
     report = commands.add_parser("report", help="Report the executed evidence prefix")
     report.add_argument("--run-dir", type=Path, default=Path("runs/m0"))
     args = parser.parse_args(argv)
     if args.command == "collect" and args.split != "pilot":
         parser.error("later collection splits require an implemented milestone and preceding GO gate")
+    if args.command == "evaluate" and args.stage != "pilot":
+        parser.error("later evaluation stages require their implemented milestone and preceding GO gate")
     try:
         if args.command == "doctor":
             if args.fake:
@@ -53,6 +59,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             from .collection import collect_pilot
             result = collect_pilot(args.run_dir, args.config, resume=args.resume,
                                    dry_run=args.dry_run, split=args.split)
+        elif args.command == "evaluate":
+            from .pilot import evaluate_pilot
+            result = evaluate_pilot(args.run_dir, args.config)
         else:
             from .evaluate import render_report
             print(render_report(args.run_dir), end="")
