@@ -1,0 +1,10 @@
+# Verified core environment: Python 3.12.9, macOS arm64
+Pygments==2.21.0
+iniconfig==2.3.0
+numpy==2.5.3
+packaging==26.3
+pip==25.0
+pluggy==1.6.0
+pytest==9.1.1
+scipy==1.18.1
+setuptools==84.0.0
