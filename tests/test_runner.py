@@ -24,6 +24,7 @@ elif sys.argv[1] == "start":
     print(json.dumps({"status":"ok","outputs":request["inputs"]}))
 elif sys.argv[1] == "rm": print("a"*64)
 elif sys.argv[1] == "inspect": sys.exit(1)
+elif sys.argv[1:3] == ["container", "inspect"]: print(json.dumps([{"State":{"StartedAt":"0001-01-01T00:00:00Z","ExitCode":0,"Status":"created","Error":""}}]))
 elif sys.argv[1] == "ps": pass
 ''')
     script.chmod(0o755)
@@ -78,6 +79,16 @@ def test_engine_start_failure_is_not_a_candidate_failure(tmp_path):
     result = runner_type()(IMAGE, engine=str(engine)).run(FILES, "solve", [1])
     assert result["status"] == "infrastructure_error"
     assert result["cleanup_ok"] is True
+
+
+def test_started_candidate_exit_one_is_a_candidate_failure(tmp_path):
+    engine=Path(fake_engine(tmp_path))
+    source=engine.read_text().replace('request=json.load(sys.stdin)','sys.exit(1)\n    request=json.load(sys.stdin)')
+    source=source.replace('0001-01-01T00:00:00Z','2026-09-29T12:00:00Z').replace('"ExitCode":0','"ExitCode":1').replace('"Status":"created"','"Status":"exited"')
+    engine.write_text(source)
+    result=runner_type()(IMAGE,engine=str(engine)).run(FILES,'solve',[1])
+    assert result['status']=='candidate_failure'
+    assert result['cleanup_ok']
 
 
 @pytest.mark.parametrize("name", ["../candidate.py", "/candidate.py", "_depverify_driver.py"])

@@ -1,7 +1,10 @@
 """One native resident MLX worker; bounded JSON IPC and lazy MLX imports."""
 import multiprocessing
 import os
+import hashlib
 from pathlib import Path
+import selectors
+import struct
 import threading
 import time
 import uuid
@@ -10,6 +13,57 @@ from .records import canonical_json, parse_json, read_json, sha256_bytes, write_
 from .pipeline import reserve, settle
 
 _RESIDENT = threading.Lock()
+
+
+def verify_assets(model_path, identity):
+    path=Path(model_path)
+    inventory=identity.get('asset_sha256')
+    if not isinstance(inventory,dict) or not inventory:
+        raise ValueError('model asset inventory is required')
+    actual={file.relative_to(path).as_posix() for file in path.rglob('*') if file.is_file()}
+    if actual != set(inventory):
+        raise ValueError('missing or unexpected model/tokenizer assets')
+    for name,expected in inventory.items():
+        if Path(name).is_absolute() or '..' in Path(name).parts or not isinstance(expected,str) or len(expected)!=64:
+            raise ValueError('invalid asset identity')
+        digest=hashlib.sha256()
+        with (path/name).open('rb') as stream:
+            for chunk in iter(lambda:stream.read(8*1024**2),b''):
+                digest.update(chunk)
+        if digest.hexdigest()!=expected:
+            raise ValueError('model/tokenizer asset changed: '+name)
+    return sha256_bytes(canonical_json(inventory))
+
+
+def _bounded_ipc(connection, request, deadline):
+    """Deadline covers every byte of Connection's bounded length-prefixed frame."""
+    fd=connection.fileno()
+    os.set_blocking(fd,False)
+    payload=canonical_json(request) if request is not None else b''
+    outgoing=struct.pack('!i',len(payload))+payload if request is not None else b''
+    offset,expected=0,None
+    received=bytearray()
+    with selectors.DefaultSelector() as selector:
+        selector.register(fd,selectors.EVENT_READ | (selectors.EVENT_WRITE if outgoing else 0))
+        while True:
+            remaining=deadline-time.monotonic()
+            if remaining<=0:raise TimeoutError('model IPC deadline')
+            for _,events in selector.select(remaining):
+                if events & selectors.EVENT_WRITE and offset<len(outgoing):
+                    try:offset+=os.write(fd,outgoing[offset:offset+8192])
+                    except BlockingIOError:pass
+                    if offset==len(outgoing):selector.modify(fd,selectors.EVENT_READ)
+                if events & selectors.EVENT_READ:
+                    try:chunk=os.read(fd,min(8192,65540-len(received)))
+                    except BlockingIOError:continue
+                    if not chunk:raise EOFError('model worker disconnected')
+                    received.extend(chunk)
+                    if expected is None and len(received)>=4:
+                        expected=struct.unpack('!i',received[:4])[0]
+                        if not 0<expected<=65536:raise ValueError('invalid model response frame')
+                    if expected is not None and len(received)>=expected+4:
+                        if len(received)!=expected+4:raise ValueError('unexpected extra model response bytes')
+                        return parse_json(bytes(received[4:]).decode())
 
 
 def assemble_messages(task, role, proposal=None):
@@ -28,7 +82,12 @@ def assemble_messages(task, role, proposal=None):
         fields['replacement'] = proposal
     output = ('Return only raw Python source, starting with imports or def. Do not wrap it in Markdown.' if role=='proposal'
               else 'Return only a JSON object, starting with { and ending with }. Exactly two keys: verdict (PASS, FAIL, or UNKNOWN) and reason. Do not use Markdown.')
+    example_task = ('Formatting example only: return a raw Python file with solve(x) returning x. No Markdown.'
+                    if role=='proposal' else 'Formatting example only: review cannot proceed because no contract is provided.')
+    example_output = ('def solve(x):\n    return x\n' if role=='proposal'
+                      else '{"verdict":"UNKNOWN","reason":"No contract was provided."}')
     return [{'role': 'system', 'content': prompt.read_text()},
+            {'role': 'user', 'content': example_task}, {'role': 'assistant', 'content': example_output},
             {'role': 'user', 'content': 'Task materials (JSON data):\n' + canonical_json(fields).decode() + '\n\n' + output}]
 
 
@@ -110,7 +169,7 @@ class LocalModel:
     def __init__(self, model_path, identity, ledger, limits, stage, *, worker_target=None, timeout=180., record_dir=None):
         if not 0 < timeout <= 180:
             raise ValueError('model timeout exceeds its envelope')
-        self.path, self.identity, self.ledger = Path(model_path), dict(identity), Path(ledger)
+        self.path, self.identity, self.ledger = Path(model_path), parse_json(canonical_json(identity).decode()), Path(ledger)
         self.limits, self.stage, self.timeout = limits, stage, timeout
         self.target = worker_target or _mlx_worker
         self.record_dir = Path(record_dir) if record_dir else self.ledger.parent / 'model-calls'
@@ -147,23 +206,27 @@ class LocalModel:
         result = {'status': 'infrastructure_error', 'text': '', 'input_tokens': 0, 'output_tokens': 0}
         try:
             if launch:
+                if self.target is _mlx_worker or 'asset_sha256' in self.identity:
+                    result['verified_asset_hash']=verify_assets(self.path,self.identity)
                 context = multiprocessing.get_context('spawn')
                 self.connection, child = context.Pipe()
                 self.process = context.Process(target=self.target, args=(child, self.path), daemon=True)
                 self.process.start()
                 child.close()
-            else:
-                self.connection.send_bytes(canonical_json(request))
-            if not self.connection.poll(max(0., min(timeout, 178.) - (time.monotonic() - started))):
-                result['status'] = 'model_timeout'
-                self._kill()
-            else:
-                result = parse_json(self.connection.recv_bytes(65536).decode())
-                if result['status'] == 'infrastructure_error':
-                    self._kill()
+            verified=result.get('verified_asset_hash')
+            result=_bounded_ipc(self.connection,None if launch else request,started+min(timeout,178.))
+            if verified:result['verified_asset_hash']=verified
+            if result['status']=='infrastructure_error':self._kill()
+        except TimeoutError:
+            result['status']='model_timeout'
+            self._kill()
         except (OSError, EOFError, ValueError) as exc:
             result.update(status='infrastructure_error', error_type=type(exc).__name__)
             self._kill()
+        except BaseException:
+            result['status']='interrupted'
+            self._kill()
+            raise
         finally:
             elapsed = time.monotonic() - started
             result.update(attempt_id=attempt, elapsed_seconds=elapsed, timed_out=result['status'] == 'model_timeout',

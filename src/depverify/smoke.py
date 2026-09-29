@@ -17,6 +17,72 @@ from .records import GateResult, canonical_json, read_json, sha256_bytes, write_
 from .resources import doctor_local
 from .tasks import load_pilot, materialize, preflight
 
+REQUIRED_FIXTURES=('test_real_candidate_json_and_fresh_state','test_real_infinite_loop_is_terminated_and_removed',
+                   'test_real_output_flood_is_bounded_and_removed','test_real_subprocess_spawning_is_bounded',
+                   'test_real_network_access_is_denied','test_real_home_file_is_not_available',
+                   'test_real_protected_file_write_is_denied')
+
+
+def prerequisite_bindings(image):
+    root=Path(__file__).resolve().parents[2]
+    code={name:sha256_bytes((root/'src/depverify'/name).read_bytes()) for name in
+          ('runner.py','_container_driver.py','tasks.py','grading.py','records.py')}
+    code['test_runner.py']=sha256_bytes((root/'tests/test_runner.py').read_bytes())
+    bench={file.relative_to(root).as_posix():sha256_bytes(file.read_bytes()) for file in (root/'bench').rglob('*') if file.is_file() and file.suffix in ('.py','.json','.jsonl')}
+    return {'code':sha256_bytes(canonical_json(code)),'benchmark':sha256_bytes(canonical_json(bench)),
+            'image':sha256_bytes(canonical_json({'image':image,'platform':'linux/arm64'}))}
+
+
+def _fixture_xml(path):
+    root=ET.parse(path).getroot()
+    cases=list(root.iter('testcase'))
+    names=[case.get('name') for case in cases]
+    if not cases or not set(REQUIRED_FIXTURES).issubset(names) or any(case.find(tag) is not None for case in cases for tag in ('failure','error','skipped')):
+        raise ValueError('incomplete or failed isolation fixtures')
+    return cases
+
+
+def validate_prerequisites(run_dir):
+    run_dir=Path(run_dir)
+    image=read_json(run_dir/'runner-environment.json')['image']
+    bindings=prerequisite_bindings(image)
+    proof=read_json(run_dir/'runner-fixtures/proof.json')
+    xml=run_dir/'runner-fixtures/results.xml'
+    if proof['bindings']!=bindings:raise ValueError('stale fixture bindings')
+    if proof['xml_sha256']!=sha256_bytes(xml.read_bytes()):raise ValueError('fixture evidence changed')
+    _fixture_xml(xml)
+    admission=read_json(run_dir/'pilot-admission/results.json')
+    expected={task.episode_id for task in load_pilot()}
+    ids=[row['episode_id'] for row in admission['tasks']]
+    if admission.get('bindings')!=bindings:raise ValueError('stale admission bindings')
+    if (not admission['passed'] or len(ids)!=len(expected) or set(ids)!=expected or
+            any(row['passed'] is not True for row in admission['tasks'])):
+        raise ValueError('incomplete or failed pilot admission')
+    return {'passed':True,'bindings':bindings}
+
+
+def verify_runner_fixtures(run_dir):
+    import os
+    import shutil
+    import sys
+    run_dir=Path(run_dir)
+    image=read_json(run_dir/'runner-environment.json')['image']
+    before=prerequisite_bindings(image)
+    folder=run_dir/'runner-fixtures'/uuid.uuid4().hex
+    folder.mkdir(parents=True)
+    env=os.environ | {'DEPVERIFY_DOCKER_TEST_IMAGE':image,'DEPVERIFY_RUN_DIR':str(folder/'invocations')}
+    xml=folder/'results.xml'
+    result=subprocess.run([sys.executable,'-m','pytest','tests/test_runner.py','-q','--junitxml='+str(xml)],
+                          env=env,capture_output=True,text=True,timeout=120)
+    (folder/'output.txt').write_text(result.stdout+result.stderr)
+    if result.returncode or before!=prerequisite_bindings(image):raise ValueError('isolation fixture run failed or inputs changed')
+    _fixture_xml(xml)
+    proof={'bindings':before,'xml_sha256':sha256_bytes(xml.read_bytes()),'xml_path':str(xml)}
+    write_json_atomic(folder/'proof.json',proof)
+    shutil.copyfile(xml,run_dir/'runner-fixtures/results.xml')
+    write_json_atomic(run_dir/'runner-fixtures/proof.json',proof)
+    return proof
+
 
 def forecast_stage(measurements, counts, *, margin=1.5, remaining_seconds=3600.):
     required = ('startup_seconds', 'prompt_seconds_per_token', 'generation_seconds_per_token',
@@ -116,6 +182,7 @@ def _smoke_local(run_dir, config_path):
         raise ValueError('local prerequisites are blocked')
     identity = read_json(run_dir/'model-identity.json')
     environment = read_json(run_dir/'runner-environment.json')
+    validate_prerequisites(run_dir)
     admission = read_json(run_dir/'pilot-admission/results.json')
     fixtures = ET.parse(run_dir/'runner-fixtures/results.xml').getroot()
     if not admission['passed'] or any(int(suite.get('failures', '0')) or int(suite.get('errors', '0')) or

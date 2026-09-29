@@ -211,7 +211,16 @@ class ContainerRunner:
                         else:
                             result["status"] = "infrastructure_error" if capture["exit_code"] == 125 else "candidate_failure"
                     except (ValueError, KeyError, AttributeError, TypeError):
-                        result["status"] = "candidate_failure" if capture["exit_code"] in (0, 137) else "infrastructure_error"
+                        result["status"] = "infrastructure_error"
+                    if result['status']=='infrastructure_error':
+                        state_result=_capture([self.engine,'container','inspect',cid],deadline=deadline-2.,limit=4096)
+                        try:
+                            state=parse_json(state_result['stdout'])[0]['State']
+                            result['execution_state']=state
+                            if (state_result['exit_code']==0 and state['Status']=='exited' and
+                                    not state.get('Error') and state['StartedAt']!='0001-01-01T00:00:00Z'):
+                                result['status']='candidate_failure'
+                        except (ValueError,KeyError,TypeError,IndexError):pass
         except (OSError, ValueError) as exc:
             result["error_type"] = type(exc).__name__
         finally:

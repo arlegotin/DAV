@@ -57,3 +57,14 @@ def test_amended_config_has_storage_budget_and_keeps_execution_caps():
     assert config["storage"]["reserve_bytes"] == GIB
     assert config["limits"]["model_call_seconds"] == 180
     assert config["budgets"]["stage_model_seconds"]["M1"] == 900
+
+
+def test_verified_cached_assets_do_not_require_another_download_on_operational_check():
+    from depverify.resources import incremental_needs
+    needs=incremental_needs(model_verified=True,image_verified=True)
+    assert needs['model_download']==0
+    assert needs['python_image_and_download_overhead']==0
+    plan=resources().storage_plan([item('workspace',1,3,1),
+                                  item('model',2,3,0,additional_bytes=needs['model_download']),
+                                  item('image',2,3,0,additional_bytes=needs['python_image_and_download_overhead'])])
+    assert plan['passed']

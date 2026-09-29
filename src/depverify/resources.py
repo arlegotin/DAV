@@ -8,9 +8,14 @@ import shutil
 import subprocess
 import uuid
 
-from .records import write_json_atomic
+from .records import read_json, parse_json, write_json_atomic
 
 GIB = 2**30
+
+
+def incremental_needs(*,model_verified=False,image_verified=False):
+    return {'workspace_records_and_dependencies':GIB,'model_download':0 if model_verified else 5*GIB,
+            'python_image_and_download_overhead':0 if image_verified else GIB}
 
 
 def _bytes(value):
@@ -91,17 +96,34 @@ def doctor_local(run_dir: Path, config_path: Path) -> dict:
                 "engine": ["docker", "version", "--format", "{{json .}}"]}
     probes = {name: _probe(command) for name, command in commands.items()}
     ram = int(probes["ram"]["stdout"].strip()) if probes["ram"]["exit_code"] == 0 else None
-    # Conservative preliminary bounds; exact assets are rechecked before download.
-    items = [storage_item("workspace_records_and_dependencies", REPO_ROOT, GIB),
-             storage_item("model_download", model_cache_path(), 5 * GIB),
-             storage_item("python_image_and_download_overhead", Path.home() / "Library/Containers/com.docker.docker/Data", GIB)]
+    model_verified=image_verified=False
+    cache=model_cache_path()
+    try:
+        from .local_model import verify_assets
+        identity=read_json(Path(run_dir)/'model-identity.json')
+        cache=Path(identity['path'])
+        verify_assets(cache,identity)
+        model_verified=True
+    except (OSError,ValueError,KeyError):pass
+    try:
+        environment=read_json(Path(run_dir)/'runner-environment.json')
+        inspection=_probe(['docker','image','inspect',environment['image'],'--format','{{json .}}'])
+        image=parse_json(inspection['stdout'])
+        image_verified=(inspection['exit_code']==0 and image['Id']==environment['image_id'] and
+                        environment['image'] in image['RepoDigests'] and image['Architecture']=='arm64' and image['Os']=='linux')
+    except (OSError,ValueError,KeyError):pass
+    needs=incremental_needs(model_verified=model_verified,image_verified=image_verified)
+    items=[storage_item('workspace_records_and_dependencies',REPO_ROOT,needs['workspace_records_and_dependencies']),
+           storage_item('model_download',cache,needs['model_download']),
+           storage_item('python_image_and_download_overhead',Path.home()/'Library/Containers/com.docker.docker/Data',needs['python_image_and_download_overhead'])]
     storage = storage_plan(items, margin=config["storage"]["planning_margin"], reserve_bytes=config["storage"]["reserve_bytes"])
     passed = (all(p["exit_code"] == 0 for p in probes.values()) and probes["architecture"]["stdout"].strip() == "arm64"
               and "AC Power" in probes["power"]["stdout"] and storage["passed"])
     output = {"schema_version": 1, "recorded_at": datetime.now(timezone.utc).isoformat(), "phase": "prerequisites_only",
               "passed": passed, "status": "READY_FOR_SMOKE_SETUP" if passed else "BLOCKED", "probes": probes,
               "ram_bytes": ram, "outside_working_set_bytes": max(8 * GIB, math.ceil(.25 * ram)) if ram else None,
-              "storage_items": items, "storage": storage, "storage_estimate_status": "preliminary_bounds; recheck exact assets",
+              "storage_items": items, "storage": storage, "storage_estimate_status": "incremental; conservative bounds for unverified assets",
+              'cache_inventory':{'model_verified':model_verified,'image_verified':image_verified},
               "docker_vm_space_status": "verify separately during isolated runner setup", "artifact_hashes": implementation_hashes(config_path),
               "model_downloads": 0, "model_calls": 0, "candidate_executions": 0, "benchmark_eligible": False}
     path = Path(run_dir) / "resources" / uuid.uuid4().hex / "profile.json"

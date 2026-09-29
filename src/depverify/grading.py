@@ -17,7 +17,8 @@ def grade(task, proposal, runner):
     if proposal.episode_id != task.episode_id:
         raise ValueError("proposal belongs to another task")
     if proposal.status != "ok":
-        return {"episode_id": task.episode_id, "label": 0, "status": proposal.status, "elapsed_seconds": 0.}
+        label='LABEL_UNRESOLVED' if proposal.status in ('infrastructure_error','model_timeout','interrupted') else 0
+        return {"episode_id": task.episode_id, "label": label, "status": proposal.status, "elapsed_seconds": 0.}
     case = private_case(task)
     result = runner.run(dict(task.base_files) | {task.editable_path: proposal.replacement}, task.entry_point, case["inputs"])
     if result["status"] == "infrastructure_error":
@@ -48,5 +49,6 @@ def validate_pilot(runner):
         passed = (runs["reference"]["passes"] and public_ok and
                   all(not row["passes"] and row["status"] != "infrastructure_error" for name, row in runs.items() if name != "reference"))
         rows.append({"episode_id": task.episode_id, "passed": passed, "runs": runs, "public_reference_passed": public_ok})
-    return {"passed": all(row["passed"] for row in rows), "tasks": rows,
+    from .smoke import prerequisite_bindings
+    return {"passed": all(row["passed"] for row in rows), "tasks": rows, "bindings":prerequisite_bindings(runner.image),
             "note": "References/mutations validate the evaluator; none are natural model proposals."}

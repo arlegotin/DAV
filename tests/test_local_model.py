@@ -1,6 +1,8 @@
 import json
 import time
 import threading
+import os
+import struct
 from pathlib import Path
 import pytest
 from depverify.pipeline import resume_attempts
@@ -17,12 +19,24 @@ def fake_worker(connection, model_path):
                                          'output_tokens': 1, 'prompt_tps': 10, 'generation_tps': 10}).encode())
 
 
+def unread_worker(connection, model_path):
+    connection.send_bytes(b'{"status":"ready"}')
+    time.sleep(10)
+
+
+def partial_worker(connection, model_path):
+    connection.send_bytes(b'{"status":"ready"}')
+    connection.recv_bytes()
+    os.write(connection.fileno(),struct.pack('!i',60000)+b'{')
+    time.sleep(10)
+
+
 def model(tmp_path, **kwargs):
     from depverify.local_model import LocalModel
     return LocalModel(Path('/not-a-real-model'), {'revision': 'a' * 40}, tmp_path / 'budget.jsonl',
                       {'total_seconds': {'model': 43200}, 'stage_seconds': {'M1': {'model': 900}},
                        'per_call_seconds': {'model': 180, 'execution': 10}}, 'M1',
-                      worker_target=fake_worker, **kwargs)
+                      worker_target=kwargs.pop('worker_target',fake_worker), **kwargs)
 
 
 def test_chat_template_overflow_does_not_call_generation():
@@ -110,3 +124,56 @@ def test_load_uses_declared_chat_eos_instead_of_stale_conversion_eos(tmp_path):
     (tmp_path/'tokenizer.json').write_text(json.dumps({'added_tokens':[{'content':'<|im_end|>','id':151645}]}))
     assert load_options(tmp_path) == {'tokenizer_config':{'trust_remote_code':False},
                                       'model_config':{'eos_token_id':151645}}
+
+
+def test_public_formatting_example_precedes_task_without_repairing_generated_bytes():
+    from depverify.local_model import assemble_messages
+    task=load_pilot()[0]
+    messages=assemble_messages(task,'proposal')
+    assert [m['role'] for m in messages]==['system','user','assistant','user']
+    assert messages[2]['content']=='def solve(x):\n    return x\n'
+    assert task.contract not in messages[1]['content']
+    assert task.contract in messages[-1]['content']
+
+
+@pytest.mark.parametrize('worker,content',[(unread_worker,'x'*60000),(partial_worker,'x')],ids=['blocked-send','partial-response'])
+def test_watchdog_covers_transmission_and_partial_response_and_restart(tmp_path,worker,content):
+    local=model(tmp_path,worker_target=worker,timeout=.05)
+    try:
+        local.start(timeout=5)
+        started=time.monotonic()
+        result=local.generate([{'role':'user','content':content}],role='R1',seed=1,temperature=0)
+        assert time.monotonic()-started<1.5
+        assert result['status']=='model_timeout'
+        assert not local.worker_alive
+        assert resume_attempts(tmp_path/'budget.jsonl')['reserved_model_seconds']==0
+        local.target=fake_worker
+        result=local.generate([{'role':'user','content':'retry'}],role='R1',seed=1,temperature=0)
+        assert result['status']=='ok'
+    finally:
+        local.close()
+
+
+def test_changed_assets_refuse_before_worker_load(tmp_path):
+    from depverify.records import sha256_bytes
+    asset=tmp_path/'tokenizer_config.json'
+    asset.write_text('{"eos_token":"old"}')
+    identity={'revision':'a'*40,'asset_sha256':{asset.name:sha256_bytes(asset.read_bytes())}}
+    local=model(tmp_path)
+    local.path=tmp_path
+    local.identity=identity
+    asset.write_text('{"eos_token":"changed"}')
+    with pytest.raises(RuntimeError,match='setup failed'):
+        local.start()
+    assert not local.worker_alive
+
+
+def test_asset_inventory_rejects_unexpected_weights_and_missing_tokenizer(tmp_path):
+    from depverify.local_model import verify_assets
+    from depverify.records import sha256_bytes
+    file=tmp_path/'tokenizer.json';file.write_text('{}')
+    identity={'asset_sha256':{'tokenizer.json':sha256_bytes(file.read_bytes())}}
+    (tmp_path/'unexpected.safetensors').write_bytes(b'weights')
+    with pytest.raises(ValueError):verify_assets(tmp_path,identity)
+    (tmp_path/'unexpected.safetensors').unlink();file.unlink()
+    with pytest.raises(ValueError):verify_assets(tmp_path,identity)

@@ -68,3 +68,11 @@ def test_environment_failure_is_unresolved_and_never_guessed():
             return {"status": "infrastructure_error", "outputs": [], "elapsed_seconds": .1}
     task = load()[0]
     assert grading.grade(task, make_proposal(task), Runner())["label"] == "LABEL_UNRESOLVED"
+
+
+def test_failed_actor_environment_remains_unresolved_not_an_incorrect_patch():
+    grading,load=api()
+    task=load()[0]
+    class Runner:
+        def run(self,*args):raise AssertionError('no candidate to grade')
+    assert grading.grade(task,make_proposal(task,'infrastructure_error'),Runner())['label']=='LABEL_UNRESOLVED'
