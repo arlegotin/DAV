@@ -24,9 +24,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     smoke = commands.add_parser("smoke", help="Run only the gated M1 native-model smoke test")
     smoke.add_argument("--config", type=Path, default=REPO_ROOT / "config.toml")
     smoke.add_argument("--run-dir", type=Path, default=Path("runs/m1"))
+    collect = commands.add_parser("collect", help="Collect only the gated M2 evidence pilot")
+    collect.add_argument("--split", choices=("pilot", "train", "dev", "test"), required=True)
+    collect.add_argument("--resume", action="store_true")
+    collect.add_argument("--dry-run", action="store_true")
+    collect.add_argument("--config", type=Path, default=REPO_ROOT / "config.toml")
+    collect.add_argument("--run-dir", type=Path, default=Path("runs/m2"))
     report = commands.add_parser("report", help="Report the executed evidence prefix")
     report.add_argument("--run-dir", type=Path, default=Path("runs/m0"))
     args = parser.parse_args(argv)
+    if args.command == "collect" and args.split != "pilot":
+        parser.error("later collection splits require an implemented milestone and preceding GO gate")
     try:
         if args.command == "doctor":
             if args.fake:
@@ -41,13 +49,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "smoke":
             from .smoke import smoke_local
             result = smoke_local(args.run_dir, args.config)
+        elif args.command == "collect":
+            from .collection import collect_pilot
+            result = collect_pilot(args.run_dir, args.config, resume=args.resume,
+                                   dry_run=args.dry_run, split=args.split)
         else:
             from .evaluate import render_report
             print(render_report(args.run_dir), end="")
             return 0
         print(canonical_json(result).decode("utf-8"))
         return 0 if result.get("passed", True) else 1
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
         print(f"depverify: {exc}", file=sys.stderr)
         return 1
 
