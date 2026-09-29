@@ -1,0 +1,42 @@
+[experiment]
+schema_version = 1
+
+[limits]
+resident_models = 1
+concurrent_model_requests = 1
+input_tokens = 3072
+proposal_output_tokens = 512
+review_output_tokens = 128
+context_tokens = 4096
+replacement_bytes = 65536
+acquisitions = 4
+model_call_seconds = 180
+candidate_seconds = 10
+candidate_output_bytes = 65536
+candidate_cpus = 1
+candidate_memory_mib = 512
+candidate_pids = 32
+free_space_gib = 20
+resource_reserve_gib = 8
+resource_reserve_fraction = 0.25
+planning_margin = 1.5
+
+[budgets]
+model_total_seconds = 43200
+
+[budgets.stage_model_seconds]
+M0 = 0
+M1 = 900
+M2 = 3600
+M3 = 14400
+M4 = 10800
+M5 = 7200
+M6 = 0
+
+[objective]
+wrong_accept = 20
+defer = 5
+
+[revisions]
+pilot = 1
+mechanism = 1
