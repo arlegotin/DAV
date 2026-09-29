@@ -13,6 +13,20 @@ _MARKER = ".depverify-task.json"
 _REPLACEMENT_BYTES = 64 * 1024
 
 
+def load_pilot() -> list[Task]:
+    from .records import from_dict, parse_json
+    public = Path(__file__).resolve().parents[2] / "bench/public"
+    manifest = read_json(public / "pilot-manifest.json")
+    data = (public / "pilot.jsonl").read_bytes()
+    if sha256_bytes(data) != manifest["task_sha256"]:
+        raise ValueError("pilot task manifest changed")
+    tasks = [from_dict(Task, parse_json(line.decode())) for line in data.splitlines()]
+    validate_splits(tasks)
+    if len(tasks) != 24 or any(task.split != "pilot" for task in tasks):
+        raise ValueError("pilot is exactly 24 episodes")
+    return tasks
+
+
 class _Rejected(ValueError):
     pass
 
