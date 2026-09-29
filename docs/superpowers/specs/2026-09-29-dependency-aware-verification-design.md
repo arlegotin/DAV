@@ -2,7 +2,7 @@
 
 **Date:** 29 September 2026
 
-**Status:** Written specification for review; no implementation or research milestone has run in this repository.
+**Status:** M0 implemented; M1 execution continues under the user-authorized storage amendment of 29 September 2026.
 
 **Authority:** The project brief supplied with this request. Its budgets, sample sizes, gates, and exclusions remain binding.
 
@@ -164,10 +164,12 @@ At M1 resolve immutable model/tokenizer revisions, download safetensors only for
 | Candidate container | 1 CPU, 512 MiB, 32 processes |
 | Candidate invocation wall time | 10 seconds with outer watchdog |
 | Candidate combined stdout/stderr | 64 KiB; terminate at cap |
-| Free-space target before M1 | 20 GiB, plus verify actual measured needs |
+| Storage before downloads/stages | Per-filesystem additional bytes × 1.5, plus 1 GiB free headroom; verify actual asset and Docker VM needs |
 | M1 / M2 model-active budgets | 15 / 60 minutes |
 | M3 / M4 / M5 model-active budgets | 4 / 3 / 2 hours |
 | Total model-active budget | 12 hours, including failed/repeated calls |
+
+Storage amendment (29 September 2026, explicitly requested by the user): there is no blanket 20 GiB repository-volume minimum. Locate the model cache, dependency environment, Docker disk, staging, and records. Sum incremental uncached asset sizes on each filesystem, include download/image overhead, and require 1.5× that sum plus 1 GiB headroom there. Complete verified cached assets do not require another download copy. Resolve exact model sizes before download and verify Docker VM free space separately. Unknown or insufficient needs block the relevant operation; a small repository volume does not block downloads to another adequately provisioned volume.
 
 Detect RAM using `sysctl -n hw.memsize`, architecture with `uname -m`, and macOS with `sw_vers`. Record AC status/power mode, observe memory pressure and swap changes, and warm up before timing. Planned experiment working set must leave `max(8 GiB, 25% of physical RAM)` outside it, including allowance for the container engine. Sustained swap growth or serious pressure blocks expansion; never raise privileged memory limits. M1 fixes and records the sampling cadence/rule used to judge sustained pressure before M2.
 

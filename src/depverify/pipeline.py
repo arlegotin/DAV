@@ -260,13 +260,13 @@ def require_gate(gate_path: Path, *, stage: str, expected_hashes: dict) -> GateR
 def load_config(path: Path) -> dict:
     with Path(path).open("rb") as stream:
         config = tomllib.load(stream)
-    if set(config) != {"experiment", "limits", "budgets", "objective", "revisions"} or config["experiment"] != {"schema_version": 1}:
+    if set(config) != {"experiment", "limits", "storage", "budgets", "objective", "revisions"} or config["experiment"] != {"schema_version": 1}:
         raise ValueError("unknown configuration field or schema; no gate bypass exists")
     limit_caps = {"resident_models": 1, "concurrent_model_requests": 1, "input_tokens": 3072,
                   "proposal_output_tokens": 512, "review_output_tokens": 128, "context_tokens": 4096,
                   "replacement_bytes": 65536, "acquisitions": 4, "model_call_seconds": 180, "candidate_seconds": 10,
                   "candidate_output_bytes": 65536, "candidate_cpus": 1, "candidate_memory_mib": 512, "candidate_pids": 32,
-                  "free_space_gib": 20, "resource_reserve_gib": 8, "resource_reserve_fraction": .25, "planning_margin": 1.5}
+                  "resource_reserve_gib": 8, "resource_reserve_fraction": .25, "planning_margin": 1.5}
     if set(config["limits"]) != set(limit_caps):
         raise ValueError("invalid limit configuration")
     for name, value in config["limits"].items():
@@ -274,6 +274,8 @@ def load_config(path: Path) -> dict:
             raise ValueError("default execution limits changed; revise explicitly before experimental freeze")
     if config["objective"] != {"wrong_accept": 20, "defer": 5} or config["revisions"] != {"pilot": 1, "mechanism": 1}:
         raise ValueError("primary objective or revision allowances changed")
+    if config["storage"] != {"planning_margin": 1.5, "reserve_bytes": 1073741824}:
+        raise ValueError("invalid per-filesystem storage budget")
     if set(config["budgets"]) != {"model_total_seconds", "stage_model_seconds"}:
         raise ValueError("invalid budget configuration")
     if _nonnegative(config["budgets"]["model_total_seconds"]) != 43200. or config["budgets"]["stage_model_seconds"] != _STAGE_MODEL_CAPS:
@@ -284,6 +286,8 @@ def load_config(path: Path) -> dict:
 def implementation_hashes(config_path: Path | None = None) -> dict:
     paths = [*REPO_ROOT.joinpath("src/depverify").glob("*.py"), *REPO_ROOT.joinpath("tests").glob("*.py"),
              REPO_ROOT / "pyproject.toml", REPO_ROOT / "requirements.lock"]
+    paths.extend(p for folder in (REPO_ROOT / "prompts", REPO_ROOT / "bench") if folder.exists()
+                 for p in folder.rglob("*") if p.is_file() and p.suffix in {".txt", ".py", ".json", ".jsonl"})
     hashes = {path.relative_to(REPO_ROOT).as_posix(): sha256_bytes(path.read_bytes()) for path in sorted(paths)}
     return {"code": sha256_bytes(canonical_json(hashes)),
             "config": sha256_bytes(Path(config_path or REPO_ROOT / "config.toml").read_bytes())}

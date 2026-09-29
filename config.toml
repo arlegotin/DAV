@@ -16,10 +16,13 @@ candidate_output_bytes = 65536
 candidate_cpus = 1
 candidate_memory_mib = 512
 candidate_pids = 32
-free_space_gib = 20
 resource_reserve_gib = 8
 resource_reserve_fraction = 0.25
 planning_margin = 1.5
+
+[storage]
+planning_margin = 1.5
+reserve_bytes = 1073741824
 
 [budgets]
 model_total_seconds = 43200
