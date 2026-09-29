@@ -45,3 +45,9 @@ def test_existing_swap_is_not_experiment_growth_but_sustained_growth_blocks():
     assert check(stable, 36*1024**3, 6*1024**3, 8*1024**3)['passed']
     growing = [row | {'swap_used_bytes': row['swap_used_bytes'] + 1024**3} for row in stable]
     assert not check(growing, 36*1024**3, 6*1024**3, 8*1024**3, baseline_swap=20*1024**3)['passed']
+
+
+def test_measured_worker_rss_counts_even_when_mlx_allocation_is_smaller():
+    _,_,check=api()
+    samples=[{'elapsed_seconds':0,'swap_used_bytes':0,'pressure_level':1,'worker_rss_bytes':20*1024**3}]
+    assert not check(samples,36*1024**3,5*1024**3,8*1024**3)['passed']

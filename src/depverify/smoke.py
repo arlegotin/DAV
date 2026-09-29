@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 from .checks import parse_review
 from .local_model import LocalModel, assemble_messages
-from .pipeline import implementation_hashes, load_config, require_gate, resume_attempts, write_gate
+from .pipeline import implementation_hashes, load_config, require_gate, resume_attempts, write_gate, reserve, settle
 from .records import GateResult, canonical_json, read_json, sha256_bytes, write_json_atomic
 from .resources import doctor_local
 from .tasks import load_pilot, materialize, preflight
@@ -115,7 +115,8 @@ def memory_check(samples, ram_bytes, peak_model_bytes, engine_bytes, *, baseline
     if not samples:
         return {'passed': False, 'reason': 'no memory measurements'}
     reserve = max(8*1024**3, math.ceil(.25 * ram_bytes))
-    planned = peak_model_bytes + engine_bytes + 512*1024**2 + 1024**3
+    peak_worker=max(peak_model_bytes,max(row.get('worker_rss_bytes',0) for row in samples))
+    planned = peak_worker + engine_bytes + 512*1024**2 + 1024**3
     baseline = samples[0]['swap_used_bytes'] if baseline_swap is None else baseline_swap
     serious = any(row['pressure_level'] >= 4 for row in samples)
     warning = [row for row in samples if row['pressure_level'] >= 2]
@@ -124,17 +125,19 @@ def memory_check(samples, ram_bytes, peak_model_bytes, engine_bytes, *, baseline
     growth = len(swap) >= 3 and swap[-1]['elapsed_seconds'] - swap[0]['elapsed_seconds'] >= 30
     return {'passed': planned <= ram_bytes-reserve and not serious and not warning_sustained and not growth,
             'outside_working_set_bytes': reserve, 'planned_working_set_bytes': planned,
+            'peak_worker_or_mlx_bytes':peak_worker,
             'baseline_swap_bytes': baseline, 'maximum_swap_bytes': max(row['swap_used_bytes'] for row in samples),
             'serious_pressure': serious, 'sustained_warning': warning_sustained, 'sustained_swap_growth': growth}
 
 
 class MemoryMonitor:
     """Trusted system probes; rules are frozen in the smoke manifest before load."""
-    def __init__(self):
+    def __init__(self,model=None):
         self.samples, self.errors = [], []
         self.stop = threading.Event()
         self.started = time.monotonic()
         self.thread = threading.Thread(target=self._sample, daemon=True)
+        self.model=model
 
     def _sample(self):
         while not self.stop.is_set():
@@ -145,7 +148,14 @@ class MemoryMonitor:
                 match = re.search(r'used\s*=\s*([0-9.]+)([MG])', swap.stdout)
                 if not match:
                     raise ValueError('unparseable swap measurement')
-                self.samples.append({'elapsed_seconds': time.monotonic()-self.started,
+                rss=0
+                try:
+                    pid=self.model.process.pid if self.model is not None and self.model.process is not None else None
+                except ValueError:pid=None
+                if pid:
+                    result=subprocess.run(['ps','-o','rss=','-p',str(pid)],capture_output=True,text=True,timeout=2)
+                    if result.returncode==0 and result.stdout.strip():rss=int(result.stdout.strip())*1024
+                self.samples.append({'elapsed_seconds': time.monotonic()-self.started,'worker_rss_bytes':rss,
                                      'swap_used_bytes': int(float(match[1])*1024**(2 if match[2]=='M' else 3)),
                                      'pressure_level': int(pressure.stdout.strip())})
             except (OSError, ValueError, subprocess.SubprocessError) as exc:
@@ -197,12 +207,12 @@ def _smoke_local(run_dir, config_path):
                 'warmup_seed': 1099, 'repeat': 'R1 each task once with the identical input and seed',
                 'identity': identity, 'artifact_hashes': hashes, 'profile_hash': sha256_bytes(canonical_json(profile)),
                 'memory_rules': {'sample_seconds': 1, 'critical_pressure_level': 4, 'warning_pressure_level': 2,
-                                 'sustained_seconds': 30, 'minimum_samples': 3, 'swap_growth_bytes': 512*1024**2},
+                                 'sustained_seconds': 30, 'minimum_observation_seconds':31, 'minimum_samples': 3, 'swap_growth_bytes': 512*1024**2},
                 'stage_model_budget_seconds': 900, 'next_stage_counts': {'proposals':24,'reviews':72,'eager_proposals':8,'candidate_invocations':64}}
     write_json_atomic(folder/'frozen-smoke.json', manifest)
     ledger = run_dir.parent/'work-budget.jsonl'
     model = LocalModel(Path(identity['path']), identity, ledger, _limits(config), 'M1', record_dir=folder/'model-calls')
-    monitor = MemoryMonitor()
+    monitor = MemoryMonitor(model)
     calls, proposals, reviews, repeats = [], [], [], []
     try:
         monitor.start()
@@ -233,6 +243,18 @@ def _smoke_local(run_dir, config_path):
             if not memory_check(monitor.samples,profile['ram_bytes'],max(c.get('peak_memory_bytes',0) for c in calls),
                                 environment['engine_memory_bytes'])['passed']:
                 raise RuntimeError('memory envelope failed; stop expansion')
+        # Fast fallback inference still needs a complete sustained-pressure window.
+        # This is research observation, separately billed, never check latency.
+        if time.monotonic()-monitor.started<31:
+            observation=reserve(ledger,attempt_id='memory-observation-'+uuid.uuid4().hex,stage='M1',work_kind='model',
+                                allowance_seconds=180.,limits=_limits(config))
+            observed_at=time.monotonic()
+            try:
+                while time.monotonic()-monitor.started<31:
+                    if any(row['pressure_level']>=4 for row in monitor.samples):break
+                    time.sleep(.1)
+            finally:
+                settle(ledger,reservation_id=observation,actual_seconds=time.monotonic()-observed_at,status='memory_observation')
     finally:
         model.close()
         monitor.close()
