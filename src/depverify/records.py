@@ -184,6 +184,8 @@ class Proposal:
         _metadata(self.actor, {"model_revision", "tokenizer_revision", "seed", "prompt_hash", "environment_hash",
                                "input_tokens", "output_tokens", "elapsed_seconds", "timed_out", "cache_hit",
                                "sampling_settings", "attempt_id"}, actor=True)
+        if self.actor["timed_out"] and self.status == "ok":
+            raise ValueError("timed-out proposal cannot have successful status")
 
 
 @dataclass(frozen=True)
@@ -212,6 +214,11 @@ class CheckResult:
         if self.status in {"format_error", "truncated", "input_over_budget", "unavailable", "model_timeout",
                            "infrastructure_error", "refusal"} and self.verdict != "UNKNOWN":
             raise ValueError("failed acquisition must be UNKNOWN")
+        if self.metadata["timed_out"]:
+            if self.verdict == "PASS" or (self.check_id != "T" and self.verdict != "UNKNOWN"):
+                raise ValueError("timed-out acquisition cannot provide successful review evidence")
+            if self.verdict == "FAIL" and self.status != "candidate_timeout":
+                raise ValueError("timeout failure requires a reproducible candidate timeout")
 
 
 @dataclass(frozen=True)

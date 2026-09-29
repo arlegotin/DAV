@@ -6,12 +6,18 @@ import fcntl
 import math
 import os
 from pathlib import Path
+import platform
+from dataclasses import replace
+from importlib.metadata import version
 import tomllib
 
-from .records import GateResult, append_event, canonical_json, from_dict, read_events, read_json, sha256_bytes, to_dict, write_json_atomic
+from .records import CHECK_IDS, GateResult, Proposal, Task, append_event, canonical_json, from_dict, proposal_key, read_events, read_json, sha256_bytes, to_dict, write_json_atomic
 
 _STAGE_MODEL_CAPS = {"M0": 0., "M1": 900., "M2": 3600., "M3": 14400., "M4": 10800., "M5": 7200., "M6": 0.}
 _RETRY_STATUSES = {"infrastructure_error", "model_timeout", "interrupted"}
+REPO_ROOT = Path(__file__).resolve().parents[2]
+FAKE_ENVIRONMENT = {"schema_version": 1, "runner": "fake-v1", "model": "fake-v1"}
+FAKE_CHECK_VERSIONS = dict.fromkeys(CHECK_IDS, "fake-v1")
 
 
 class BudgetStop(RuntimeError):
@@ -273,3 +279,50 @@ def load_config(path: Path) -> dict:
     if _nonnegative(config["budgets"]["model_total_seconds"]) != 43200. or config["budgets"]["stage_model_seconds"] != _STAGE_MODEL_CAPS:
         raise ValueError("research budgets changed")
     return config
+
+
+def implementation_hashes(config_path: Path | None = None) -> dict:
+    paths = [*REPO_ROOT.joinpath("src/depverify").glob("*.py"), *REPO_ROOT.joinpath("tests").glob("*.py"),
+             REPO_ROOT / "pyproject.toml", REPO_ROOT / "requirements.lock"]
+    hashes = {path.relative_to(REPO_ROOT).as_posix(): sha256_bytes(path.read_bytes()) for path in sorted(paths)}
+    return {"code": sha256_bytes(canonical_json(hashes)),
+            "config": sha256_bytes(Path(config_path or REPO_ROOT / "config.toml").read_bytes())}
+
+
+def fake_actor_metadata(task: Task, replacement: str) -> dict:
+    return {"model_revision": "fake-v1", "tokenizer_revision": "fake-v1", "seed": 1,
+            "prompt_hash": sha256_bytes(canonical_json(to_dict(task))),
+            "environment_hash": sha256_bytes(canonical_json(FAKE_ENVIRONMENT)),
+            "input_tokens": 10, "output_tokens": 10, "elapsed_seconds": 8.,
+            "timed_out": False, "cache_hit": False, "sampling_settings": {"temperature": .2},
+            "attempt_id": "fake-actor:" + task.episode_id, "fake": True, "cost_regime": "synthetic"}
+
+
+def run_fake_episode(task: Task, replacement: str, evidence: Mapping, policy, parent: Path) -> tuple:
+    from .evaluate import replay_episode
+    from .tasks import apply_or_defer, materialize, preflight
+    root = materialize(task, parent)
+    status, manifest = preflight(task, replacement, root)
+    key = proposal_key(task, replacement, FAKE_ENVIRONMENT, FAKE_CHECK_VERSIONS)
+    proposal = Proposal(task.episode_id, key, replacement, status, fake_actor_metadata(task, replacement), manifest["elapsed_seconds"])
+    decision = replay_episode(proposal, "unknown_lineage", frozenset(CHECK_IDS), policy, evidence,
+                               policy_hash=sha256_bytes(canonical_json({"fake_policy": getattr(policy, "__name__", "callback")})))
+    applied = apply_or_defer(task, proposal, decision.action, root,
+                            {"proposal_key": key, "environment": FAKE_ENVIRONMENT, "check_versions": FAKE_CHECK_VERSIONS})
+    if decision.action == "ACCEPT" and applied["status"] not in ("applied", "already_applied"):
+        decision = replace(decision, action="DEFER", status=applied["status"])
+    return proposal, replace(decision, wrapper_seconds=applied["wrapper_seconds"])
+
+
+def doctor_fake(run_dir: Path, config_path: Path) -> dict:
+    import sys
+    config = load_config(config_path)
+    output = {"schema_version": 1, "mode": "fake", "benchmark_eligible": False, "python_version": platform.python_version(),
+              "dependencies": {name: version(name) for name in ("numpy", "scipy", "pytest")},
+              "artifact_hashes": implementation_hashes(config_path), "limits": config["limits"],
+              "model_calls": 0, "candidate_executions": 0, "mlx_loaded": any(n.startswith("mlx") for n in sys.modules),
+              "container_engine_used": False}
+    path = Path(run_dir) / "doctor.json"
+    write_json_atomic(path.parent / "doctor.history" / (sha256_bytes(canonical_json(output)) + ".json"), output)
+    write_json_atomic(path, output)
+    return output

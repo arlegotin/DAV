@@ -98,6 +98,15 @@ def test_missing_required_actor_and_check_metadata_is_rejected(actor_metadata, c
         r.CheckResult("1" * 64, "R1", "PASS", "ok", "", 0., check_metadata)
 
 
+def test_timeout_flags_cannot_be_loaded_as_success(actor_metadata, check_metadata):
+    r = records()
+    with pytest.raises(ValueError):
+        r.Proposal("fake-001", "1" * 64, "pass", "ok", actor_metadata | {"timed_out": True}, 0.)
+    for check in ("R1", "R2", "T", "D"):
+        with pytest.raises(ValueError):
+            r.CheckResult("1" * 64, check, "PASS", "ok", "", 180., check_metadata | {"timed_out": True})
+
+
 def test_unsupported_schema_and_extra_record_fields_fail(task_fields):
     r = records()
     data = r.to_dict(r.Task(**task_fields))
