@@ -31,6 +31,32 @@ def write_once(path, value):
     write_json_atomic(path, value)
 
 
+def resume_freeze(path,current):
+    """Keep the original freeze; a reviewed guard repair needs an exact bound record."""
+    path=Path(path)
+    if not path.exists():
+        write_once(path,current)
+        return current
+    saved=read_json(path)
+    if canonical_json(saved)==canonical_json(current):return saved
+    def evidence_inputs(value):
+        value=parse_json(canonical_json(value).decode())
+        value.get('artifact_hashes',{}).pop('code',None)
+        value.pop('check_versions',None)
+        return value
+    if evidence_inputs(saved)!=evidence_inputs(current):
+        raise ValueError('frozen evidence inputs changed; guard amendment cannot authorize them')
+    amendment_path=path.parent/'resume-guard-amendment.json'
+    if not amendment_path.exists():raise ValueError('changed collection code requires a reviewed, hash-bound guard amendment')
+    amendment=read_json(amendment_path)
+    if (amendment.get('original_sha256')!=sha256_bytes(canonical_json(saved)) or
+        amendment.get('execution_sha256')!=sha256_bytes(canonical_json(current)) or
+        not isinstance(amendment.get('reason'),str) or not amendment['reason']):
+        raise ValueError('guard amendment has stale bindings')
+    write_once(path.parent/'executions'/(current['artifact_hashes']['code']+'.json'),current)
+    return saved
+
+
 def eager_ids(tasks):
     return sorted((t.episode_id for t in tasks), key=lambda name:sha256_bytes(name.encode()))[:8]
 
@@ -151,11 +177,24 @@ def _execute(path, runner, task, replacement, inputs):
     request = {'files':files,'entry_point':task.entry_point,'inputs':inputs}
     public_hashes = {name:sha256_bytes(body.encode()) for name,body in files.items()}
     payload_hash = sha256_bytes(canonical_json({'entry_point':task.entry_point,'inputs':inputs}))
-    return durable_call(path,request,lambda:runner.run(files,task.entry_point,inputs),
+    result = durable_call(path,request,lambda:runner.run(files,task.entry_point,inputs),
                         raw_dir=getattr(runner,'record_dir',None),
                         matches=lambda row:row.get('input_hash')==payload_hash and
                         all(row.get('staged_files',{}).get(name)==digest for name,digest in public_hashes.items()),
                         ledger=getattr(runner,'ledger',None),kind='container')
+    if result.get('cleanup_ok') is False:
+        raise CollectionStop('unconfirmed container cleanup blocks further execution')
+    return result
+
+
+def _ensure_cleanup_records(run_dir):
+    # Include cached/recovered raw invocations, even when the saved T record is skipped.
+    for directory in ('container-calls','episodes','private/invocations'):
+        for path in (Path(run_dir)/directory).rglob('*.json'):
+            record=read_json(path)
+            result=record.get('result',record)
+            if isinstance(result,dict) and result.get('cleanup_ok') is False:
+                raise CollectionStop('unconfirmed container cleanup in retained invocation: '+str(path))
 
 
 def _public_check(folder, runner, task, proposal):
@@ -204,6 +243,7 @@ def _grade(folder, runner, task, proposal):
 
 def collect_episode(task, system, run_dir, model, runner, manifest, row, *, guard=lambda:None):
     run_dir = Path(run_dir)
+    _ensure_cleanup_records(run_dir)
     folder = run_dir/'episodes'/system/task.episode_id
     complete = folder/'complete.json'
     if complete.exists():
@@ -289,7 +329,7 @@ def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'
     remaining,state=_remaining(ledger)
     pending_natural=[t for t in tasks if not (run_dir/'episodes/natural'/t.episode_id/'complete.json').exists()]
     pending_eager=[t for t in tasks if t.episode_id in eager and not (run_dir/'episodes/eager'/t.episode_id/'complete.json').exists()]
-    counts={'proposals':len(pending_natural)+int(not (run_dir/'warmup.json').exists()),'reviews':len(pending_natural)*3,
+    counts={'proposals':len(pending_natural)+int(bool(pending_natural or pending_eager)),'reviews':len(pending_natural)*3,
             'eager_proposals':len(pending_eager),'candidate_invocations':2*(len(pending_natural)+len(pending_eager))}
     forecast=forecast_stage(smoke['measurements'],counts,remaining_seconds=remaining)
     plan={'passed':forecast['fits_model_budget'],'required_gate':'M1 GO + current M0 GO','natural_episodes':24,
@@ -311,7 +351,7 @@ def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'
                                      'model':identity,'environment':environment})) for c in CHECK_IDS}}
         if (run_dir/'frozen-pilot.json').exists() and not resume:
             raise ValueError('existing collection requires --resume; no new candidates')
-        write_once(run_dir/'frozen-pilot.json',manifest)
+        manifest=resume_freeze(run_dir/'frozen-pilot.json',manifest)
         if not (run_dir/'launch-forecast.json').exists():
             write_once(run_dir/'launch-forecast.json',plan)
         write_json_atomic(run_dir/'current-forecast.json',plan)
@@ -319,7 +359,7 @@ def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'
         model=LocalModel(identity['path'],identity,ledger,_limits(config),'M2',record_dir=run_dir/'model-calls')
         runner=ContainerRunner(environment['image'],ledger=ledger,limits=_limits(config),stage='M2',record_dir=run_dir/'container-calls')
         monitor=MemoryMonitor(model)
-        peak=0
+        peak=smoke.get('memory',{}).get('peak_worker_or_mlx_bytes',0)
         completed=[]
         def guard():
             nonlocal peak
@@ -337,9 +377,19 @@ def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'
                 slow=slow+1 if c['elapsed_seconds']>1.5*expected else 0
                 if slow>=3:raise CollectionStop('three calls exceeded measured timing by 50%; checkpoint and re-estimate')
         error=None
+        monitor_started=False
         try:
-            monitor.start();model.start()
-            _model_call(run_dir/'warmup.json',model,actor_messages(tasks[0],'natural'),'proposal',7304)
+            _ensure_cleanup_records(run_dir)
+            monitor_started=True
+            monitor.start()
+            guard()  # Known critical pressure blocks loading, not just the first generation.
+            previous=read_json(run_dir/'checkpoint.json') if (run_dir/'checkpoint.json').exists() else {}
+            if 'memory pressure' in (previous.get('error') or '') and monitor.samples[-1]['pressure_level']>=2:
+                raise CollectionStop('sustained memory pressure from checkpoint has not cleared')
+            startup=model.start()
+            guard()
+            _model_call(run_dir/'warmups'/(startup['attempt_id']+'.json'),model,
+                        actor_messages(tasks[0],'natural'),'proposal',7304)
             guard()
             for system,selected in [('natural',tasks),('eager',[t for t in tasks if t.episode_id in eager])]:
                 for task in sorted(selected,key=lambda t:t.episode_id):
@@ -349,7 +399,8 @@ def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'
         except (OSError,ValueError,RuntimeError) as exc:
             error=f'{type(exc).__name__}: {exc}'
         finally:
-            model.close();monitor.close()
+            model.close()
+            if monitor_started:monitor.close()
             checkpoint={'passed':error is None,'complete':error is None,'error':error,'completed_this_session':completed,
                         'memory_samples':monitor.samples,'memory_errors':monitor.errors,'peak_model_bytes':peak,
                         'budget_snapshot':resume_attempts(ledger),'recorded_at':datetime.now(timezone.utc).isoformat()}

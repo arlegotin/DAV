@@ -58,3 +58,27 @@ def test_screening_callbacks_do_not_see_labels_or_full_table():
         assert policy('same_lineage',frozenset(('R1','R2','T','D')),(None,None,None,None))[0] in ('R1','R2','T','D','ACCEPT','DEFER')
     policy,_=policies['test_only']
     assert policy('same_lineage',frozenset(('T',)),(None,None,'UNKNOWN',None))[0]=='DEFER'
+
+
+def test_unresolved_eager_panel_blocks_full_pilot_go(tmp_path,monkeypatch,actor_metadata,check_metadata):
+    from pathlib import Path
+    import depverify.pilot as p
+    from depverify.records import Proposal,CheckResult,write_json_atomic,read_json
+    natural=[];eager=[]
+    for i in range(24):
+        key=f'{i:064x}';name=f'task-{i}'
+        proposal=Proposal(name,key,'def solve(x):\n    return x\n','ok',actor_metadata|{'elapsed_seconds':1.},0.)
+        checks={c:CheckResult(key,c,'FAIL' if i>=12 and c==('R1' if i%2 else 'D') else 'PASS','ok','specific evidence',
+                            1. if c=='R1' else .01,check_metadata) for c in ('R1','R2','T','D')}
+        evidence={'episode_id':name,'root_group_id':str(i%3),'lineage':'same_lineage'}
+        natural.append((evidence,proposal,checks,{'label':int(i<12)}))
+        if i<8:eager.append((evidence,proposal,{'T':checks['T']},{'label':'LABEL_UNRESOLVED'}))
+    monkeypatch.setattr(p,'_load',lambda run_dir,system,ids:natural if system=='natural' else eager)
+    root=tmp_path/'m2'
+    write_json_atomic(root/'frozen-pilot.json',{'task_hashes':{r[0]['episode_id']:'a'*64 for r in natural},'eager_task_ids':[r[0]['episode_id'] for r in eager]})
+    write_json_atomic(root/'private/audit.json',{'data_integrity':True,'corrective_evidence_inspected':True})
+    write_json_atomic(tmp_path/'m1/smoke-results.json',{'measurements':{'startup_seconds':1.,'prompt_seconds_per_token':.00001,
+                     'generation_seconds_per_token':.001,'call_overhead_seconds':.01,'execution_seconds':.1,'timeout_rate':0.}})
+    result=p.evaluate_pilot(root,Path('config.toml'))
+    assert read_json(root/'analysis.json')['eager_system']['labels_block_stage']
+    assert result['status']=='BLOCKED'

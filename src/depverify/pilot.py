@@ -147,6 +147,7 @@ def evaluate_pilot(run_dir,config_path):
         decision=replay_episode(proposal,evidence['lineage'],frozenset(checks),callback,checks,
                                 policy_hash=sha256_bytes(canonical_json(definition|{'actor':'eager'})))
         eager_rows.append(score_decision(proposal,decision,label['label'],unit_seconds=unit)|{'root_group_id':evidence['root_group_id']})
+    eager_summary=summarize(eager_rows)
     frequencies={c:{str(y):dict(Counter(checks[c].verdict for _,_,checks,label in natural if label['label']==y and c in checks))
                       for y in (0,1)} for c in CHECK_IDS}
     statuses={c:dict(Counter(checks[c].status for _,_,checks,_ in natural if c in checks)) for c in CHECK_IDS}
@@ -170,6 +171,14 @@ def evaluate_pilot(run_dir,config_path):
         screening['reasons'].append('fixed trace audit pending')
         if screening['status']=='GO':screening['status']='INCONCLUSIVE'
     else:screening['criteria']['trace_audit']=True
+    screening['criteria']['eager_labels_resolved']=not eager_summary['labels_block_stage']
+    screening['criteria']['eager_comparison_completed']=bool(audit and type(audit.get('eager_obviously_sufficient')) is bool)
+    if eager_summary['labels_block_stage']:
+        screening['status']='BLOCKED'
+        screening['reasons'].append('eager evaluator/environment labels unresolved')
+    elif not screening['criteria']['eager_comparison_completed'] and screening['status']=='GO':
+        screening['status']='INCONCLUSIVE'
+        screening['reasons'].append('explicit eager-system comparison pending')
     costs={c:[checks[c].elapsed_seconds for _,_,checks,_ in natural if c in checks] for c in CHECK_IDS}
     cost_summary={c:{'count':len(values),'median_seconds':median(values) if values else None,
                      'p95_seconds':float(np.quantile(values,.95)) if values else None} for c,values in costs.items()}
@@ -178,7 +187,7 @@ def evaluate_pilot(run_dir,config_path):
             'policies':policies,'verdict_frequencies_by_label':frequencies,'status_frequencies':statuses,
             'timeout_counts':timeout_counts,'warm_costs':cost_summary,
             'R1_R2_joint':[{'lineage':g,'R1':a,'R2':b,'label':y,'count':n} for (g,a,b,y),n in pairs.items()],
-            'eager_system':summarize(eager_rows),'eager_task_ids':manifest['eager_task_ids'],
+            'eager_system':eager_summary,'eager_task_ids':manifest['eager_task_ids'],
             'exploratory_differences_vs_tests':{name:grouped_difference(rows,scored['test_only']) for name,rows in scored.items()},
             'forecasts':forecasts,'audit':audit,'budget_snapshot':state,
             'scope':'Development-only screening; no fitted dependency model, no confirmatory or safety claim.'}

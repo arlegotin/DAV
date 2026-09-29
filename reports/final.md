@@ -1,6 +1,6 @@
 # Dependency-aware verification: local result
 
-**INCONCLUSIVE. Execution BLOCKED at M2 by sustained system memory pressure.** M0 mathematics/harness checks and M1 local smoke passed. Six natural actors ran before the memory checkpoint: five episodes completed, one is partial; 18 natural episodes and all eight eager comparisons remain unattempted. No research gate is reported as passed.
+**INCONCLUSIVE. Execution BLOCKED at M2 by sustained system memory pressure.** M0 mathematics/harness checks and M1 local smoke passed. The final ordinary suite passes 267 tests (seven opt-in container tests skipped). Six natural actors ran before the memory checkpoint: five episodes completed, one is partial; 18 natural episodes and all eight eager comparisons remain unattempted. No research gate is reported as passed.
 
 | Milestone | Result |
 |---|---|

@@ -131,3 +131,72 @@ def test_valid_episode_resume_and_check_inputs_do_not_leak_previous_outcomes(tmp
     write_json_atomic(tmp_path/'episodes/natural'/task.episode_id/'R1.json',{})
     with pytest.raises(ValueError,match='changed'):
         collect_episode(task,'natural',tmp_path,Model(),runner,manifest,schedule([task])[task.episode_id])
+
+
+def test_critical_baseline_stops_before_model_load(tmp_path,monkeypatch):
+    import depverify.collection as c
+    identity={'revision':'fake','tokenizer_revision':'fake','path':'fake'}
+    smoke={'measurements':{'startup_seconds':1.,'prompt_seconds_per_token':.00001,'generation_seconds_per_token':.001,
+                           'call_overhead_seconds':.01,'execution_seconds':.1,'timeout_rate':0.},
+           'profile':{'ram_bytes':36*1024**3}}
+    environment={'image':'python@sha256:'+'a'*64,'engine_memory_bytes':1024**3}
+    monkeypatch.setattr(c,'require_pilot_gates',lambda *args:(identity,environment,smoke))
+    calls=[]
+    class Model:
+        def __init__(self,*args,**kwargs):self.record_dir=None
+        def start(self):calls.append('load')
+        def generate(self,*args,**kwargs):
+            calls.append('generate')
+            return {'status':'ok','text':'def solve(x):\n    return x\n','elapsed_seconds':1.,'input_tokens':10,'output_tokens':10,'attempt_id':'fake','timed_out':False}
+        def close(self):pass
+    class Monitor:
+        def __init__(self,*args):
+            self.samples=[{'pressure_level':4,'swap_used_bytes':0,'worker_rss_bytes':0,'elapsed_seconds':0.}];self.errors=[]
+        def start(self):pass
+        def close(self):pass
+    monkeypatch.setattr(c,'LocalModel',Model);monkeypatch.setattr(c,'MemoryMonitor',Monitor)
+    with pytest.raises(c.CollectionStop,match='memory'):
+        c.collect_pilot(tmp_path/'m2',Path('config.toml'))
+    assert calls==[]
+
+
+def test_unconfirmed_cleanup_blocks_cached_and_fresh_invocations(tmp_path):
+    from depverify.collection import _execute,CollectionStop
+    task=load_pilot()[0]
+    class Runner:
+        calls=0
+        def run(self,*args):
+            self.calls+=1
+            return {'status':'infrastructure_error','cleanup_ok':False,'container_name':'depverify-unconfirmed',
+                    'elapsed_seconds':1.,'outputs':[]}
+    path=tmp_path/'T-call.json';runner=Runner()
+    with pytest.raises(CollectionStop,match='cleanup'):_execute(path,runner,task,'def solve(x):\n    return x\n',[1])
+    assert runner.calls==1
+    fresh=Runner()
+    with pytest.raises(CollectionStop,match='cleanup'):_execute(path,fresh,task,'def solve(x):\n    return x\n',[1])
+    assert fresh.calls==0
+
+
+def test_retained_cleanup_obligation_blocks_episode_before_actor(tmp_path):
+    from depverify.collection import CollectionStop
+    task=load_pilot()[0]
+    class Model:
+        def generate(self,*args,**kwargs):pytest.fail('unsafe resume launched model')
+    write_json_atomic(tmp_path/'episodes/natural/earlier/T-call.json',{'result':{'cleanup_ok':False,'status':'infrastructure_error'}})
+    with pytest.raises(CollectionStop,match='cleanup'):
+        collect_episode(task,'natural',tmp_path,Model(),None,{},schedule([task])[task.episode_id])
+
+
+def test_resume_guard_amendment_is_bound_and_cannot_change_evidence_inputs(tmp_path):
+    from depverify.collection import resume_freeze
+    from depverify.records import sha256_bytes
+    original={'artifact_hashes':{'code':'a'*64},'check_versions':{'T':'v1'},'schedule':{'seed':1},'identity':{'revision':'same'}}
+    current=original|{'artifact_hashes':{'code':'b'*64},'check_versions':{'T':'new-wrapper-sha'}}
+    path=tmp_path/'frozen.json';write_once(path,original);before=path.read_bytes()
+    with pytest.raises(ValueError,match='amendment'):resume_freeze(path,current)
+    amendment={'original_sha256':sha256_bytes(canonical_json(original)),'execution_sha256':sha256_bytes(canonical_json(current)),
+               'reason':'reviewed resource/cleanup guards; fixed evidence inputs unchanged'}
+    write_json_atomic(tmp_path/'resume-guard-amendment.json',amendment)
+    assert resume_freeze(path,current)==original and path.read_bytes()==before
+    changed=current|{'schedule':{'seed':2}}
+    with pytest.raises(ValueError,match='inputs'):resume_freeze(path,changed)
