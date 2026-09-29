@@ -51,7 +51,7 @@ def test_prompt_contains_only_fixed_public_inputs_and_no_previous_verdict():
         assert 'independent_expected' not in text
         assert 'previous_verdict' not in text
         if role != 'proposal':
-            assert json.loads(messages[-1]['content'])['replacement'] == proposal
+            assert json.loads(messages[-1]['content'].split('\n')[1])['replacement'] == proposal
 
 
 def test_worker_timeout_kills_model_and_retains_all_costs(tmp_path):
@@ -101,3 +101,12 @@ def test_concurrent_request_is_rejected_before_another_call(tmp_path):
         assert len(resume_attempts(tmp_path / 'budget.jsonl')['attempts']) == 2
     finally:
         local.close()
+
+
+def test_load_uses_declared_chat_eos_instead_of_stale_conversion_eos(tmp_path):
+    from depverify.local_model import load_options
+    (tmp_path/'config.json').write_text(json.dumps({'eos_token_id':151643}))
+    (tmp_path/'tokenizer_config.json').write_text(json.dumps({'eos_token':'<|im_end|>'}))
+    (tmp_path/'tokenizer.json').write_text(json.dumps({'added_tokens':[{'content':'<|im_end|>','id':151645}]}))
+    assert load_options(tmp_path) == {'tokenizer_config':{'trust_remote_code':False},
+                                      'model_config':{'eos_token_id':151645}}

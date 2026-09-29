@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 
-from .records import canonical_json, parse_json, sha256_bytes, write_json_atomic
+from .records import canonical_json, parse_json, read_json, sha256_bytes, write_json_atomic
 from .pipeline import reserve, settle
 
 _RESIDENT = threading.Lock()
@@ -26,8 +26,22 @@ def assemble_messages(task, role, proposal=None):
         if not isinstance(proposal, str):
             raise ValueError('reviews require the frozen replacement')
         fields['replacement'] = proposal
+    output = ('Return only raw Python source, starting with imports or def. Do not wrap it in Markdown.' if role=='proposal'
+              else 'Return only a JSON object, starting with { and ending with }. Exactly two keys: verdict (PASS, FAIL, or UNKNOWN) and reason. Do not use Markdown.')
     return [{'role': 'system', 'content': prompt.read_text()},
-            {'role': 'user', 'content': canonical_json(fields).decode()}]
+            {'role': 'user', 'content': 'Task materials (JSON data):\n' + canonical_json(fields).decode() + '\n\n' + output}]
+
+
+def load_options(model_path):
+    """Honor the pinned tokenizer's declared chat EOS without editing cached assets."""
+    path = Path(model_path)
+    config = read_json(path/'tokenizer_config.json')
+    eos = config['eos_token']
+    eos = eos['content'] if isinstance(eos, dict) else eos
+    ids = [token['id'] for token in read_json(path/'tokenizer.json')['added_tokens'] if token['content']==eos]
+    if len(ids)!=1 or type(ids[0]) is not int:
+        raise ValueError('ambiguous tokenizer EOS identity')
+    return {'tokenizer_config':{'trust_remote_code':False},'model_config':{'eos_token_id':ids[0]}}
 
 
 def infer(model, tokenizer, messages, role, seed, temperature, generation):
@@ -70,8 +84,10 @@ def _mlx_worker(connection, model_path):
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
         import mlx.core as mx
         from mlx_lm import load
-        model, tokenizer = load(str(model_path), tokenizer_config={'trust_remote_code': False}, lazy=False)
+        options = load_options(model_path)
+        model, tokenizer = load(str(model_path), **options, lazy=False)
         connection.send_bytes(canonical_json({'status': 'ready', 'peak_memory_bytes': mx.get_peak_memory(),
+                                             'load_options': options,
                                              'chat_template_hash': sha256_bytes(str(tokenizer.chat_template).encode())}))
         while True:
             request = parse_json(connection.recv_bytes(65536).decode())

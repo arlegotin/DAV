@@ -21,6 +21,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     simulate = commands.add_parser("simulate", help="Run deterministic mathematical/protocol controls")
     simulate.add_argument("--suite", choices=("core",), required=True)
     simulate.add_argument("--run-dir", type=Path, default=Path("runs/m0"))
+    smoke = commands.add_parser("smoke", help="Run only the gated M1 native-model smoke test")
+    smoke.add_argument("--config", type=Path, default=REPO_ROOT / "config.toml")
+    smoke.add_argument("--run-dir", type=Path, default=Path("runs/m1"))
     report = commands.add_parser("report", help="Report the executed evidence prefix")
     report.add_argument("--run-dir", type=Path, default=Path("runs/m0"))
     args = parser.parse_args(argv)
@@ -35,6 +38,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "simulate":
             from .evaluate import run_core_suite
             result = run_core_suite(args.run_dir)
+        elif args.command == "smoke":
+            from .smoke import smoke_local
+            result = smoke_local(args.run_dir, args.config)
         else:
             from .evaluate import render_report
             print(render_report(args.run_dir), end="")

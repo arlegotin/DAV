@@ -51,8 +51,10 @@ def runner_environment(image, *, engine="docker"):
     if info["Architecture"] != "arm64" or info["Os"] != "linux":
         raise ValueError("the execution image must be Linux ARM64")
     version = subprocess.run([engine, "version", "--format", "{{json .}}"], capture_output=True, timeout=10, check=True)
+    memory = subprocess.run([engine, "info", "--format", "{{.MemTotal}}"], capture_output=True, timeout=10, check=True)
     return {"image": image, "image_id": info["Id"], "architecture": info["Architecture"],
             "os": info["Os"], "engine": parse_json(version.stdout.decode()),
+            "engine_memory_bytes": int(memory.stdout.strip()),
             "driver_hash": sha256_bytes(Path(__file__).with_name("_container_driver.py").read_bytes())}
 
 
