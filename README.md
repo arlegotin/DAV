@@ -4,6 +4,8 @@ A Mac-first research project testing whether shared-source dependency modeling m
 
 The M0 implementation runs exact finite-horizon planning, masked evidence replay, disposable-file application, and budget accounting with fake checks. It does not execute generated code or call a model. Toy results establish harness behavior; the research hypothesis is still untested.
 
+The recorded [M0 result](reports/m0.md) is GO: 186 tests and 25 core controls passed. Its [artifact manifest](reports/m0-artifacts.json) binds the code/config fingerprints and local evidence. M1 is the next permitted milestone.
+
 - [Project specification](docs/superpowers/specs/2026-09-29-dependency-aware-verification-design.md): architecture, evidence boundaries, research protocol, budgets, baselines, statistics, and stop conditions.
 - [Implementation plan](docs/superpowers/plans/2026-09-29-dependency-aware-verification.md): detailed M0 tasks and a conditional M1–M6 roadmap.
 
