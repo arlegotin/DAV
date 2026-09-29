@@ -13,6 +13,7 @@ from .records import canonical_json, parse_json, read_json, sha256_bytes, write_
 from .pipeline import reserve, settle
 
 _RESIDENT = threading.Lock()
+_PREFIXES={'proposal':'def solve(x):\n','R1':'{"verdict":','R2':'{"verdict":','D':'{"verdict":'}
 
 
 def verify_assets(model_path, identity):
@@ -80,15 +81,16 @@ def assemble_messages(task, role, proposal=None):
         if not isinstance(proposal, str):
             raise ValueError('reviews require the frozen replacement')
         fields['replacement'] = proposal
-    output = ('Return only raw Python source, starting with imports or def. Do not wrap it in Markdown.' if role=='proposal'
-              else 'Return only a JSON object, starting with { and ending with }. Exactly two keys: verdict (PASS, FAIL, or UNKNOWN) and reason. Do not use Markdown.')
+    output = ('Continue the already-started raw Python function. Complete its body and any needed helpers. Do not repeat its header or use Markdown.' if role=='proposal'
+              else 'Continue the already-started JSON object with a verdict string (PASS, FAIL, or UNKNOWN) and a reason, then close it. Do not repeat the opening or use Markdown.')
     example_task = ('Formatting example only: return a raw Python file with solve(x) returning x. No Markdown.'
                     if role=='proposal' else 'Formatting example only: review cannot proceed because no contract is provided.')
     example_output = ('def solve(x):\n    return x\n' if role=='proposal'
                       else '{"verdict":"UNKNOWN","reason":"No contract was provided."}')
     return [{'role': 'system', 'content': prompt.read_text()},
             {'role': 'user', 'content': example_task}, {'role': 'assistant', 'content': example_output},
-            {'role': 'user', 'content': 'Task materials (JSON data):\n' + canonical_json(fields).decode() + '\n\n' + output}]
+            {'role': 'user', 'content': 'Task materials (JSON data):\n' + canonical_json(fields).decode() + '\n\n' + output},
+            {'role':'assistant','content':_PREFIXES[role]}]
 
 
 def load_options(model_path):
@@ -106,7 +108,10 @@ def load_options(model_path):
 def infer(model, tokenizer, messages, role, seed, temperature, generation):
     if role not in ('proposal', 'R1', 'R2', 'D'):
         raise ValueError('unknown generation role')
-    tokens = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True)
+    prefix=messages[-1]['content'] if messages[-1]['role']=='assistant' else ''
+    if prefix and prefix!=_PREFIXES[role]:raise ValueError('response prefix cannot predetermine an outcome')
+    kwargs={'tokenize':True,'add_generation_prompt':False,'continue_final_message':True} if prefix else {'tokenize':True,'add_generation_prompt':True}
+    tokens = tokenizer.apply_chat_template(messages,**kwargs)
     cap = 512 if role == 'proposal' else 128
     base = {'input_tokens': len(tokens), 'output_tokens': 0,
             'prompt_hash': sha256_bytes(canonical_json({'messages': messages, 'input_ids': tokens})), 'text': ''}
@@ -115,7 +120,7 @@ def infer(model, tokenizer, messages, role, seed, temperature, generation):
     result = generation(model, tokenizer, tokens, cap, seed, temperature)
     if not 0 <= result['output_tokens'] <= cap:
         raise ValueError('generation violated its frozen token cap')
-    return base | result
+    return base | result | {'generated_text':result['text'],'response_prefix':prefix,'text':prefix+result['text']}
 
 
 def _native_generation(model, tokenizer, tokens, cap, seed, temperature):

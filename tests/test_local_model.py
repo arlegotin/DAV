@@ -60,12 +60,12 @@ def test_prompt_contains_only_fixed_public_inputs_and_no_previous_verdict():
     for role in ('proposal', 'R1', 'R2', 'D'):
         messages = assemble_messages(task, role, proposal if role != 'proposal' else None)
         text = json.dumps(messages)
-        assert task.contract in messages[-1]['content']
+        assert task.contract in messages[-2]['content']
         assert 'bench/private' not in text
         assert 'independent_expected' not in text
         assert 'previous_verdict' not in text
         if role != 'proposal':
-            assert json.loads(messages[-1]['content'].split('\n')[1])['replacement'] == proposal
+            assert json.loads(messages[-2]['content'].split('\n')[1])['replacement'] == proposal
 
 
 def test_worker_timeout_kills_model_and_retains_all_costs(tmp_path):
@@ -130,10 +130,26 @@ def test_public_formatting_example_precedes_task_without_repairing_generated_byt
     from depverify.local_model import assemble_messages
     task=load_pilot()[0]
     messages=assemble_messages(task,'proposal')
-    assert [m['role'] for m in messages]==['system','user','assistant','user']
+    assert [m['role'] for m in messages]==['system','user','assistant','user','assistant']
     assert messages[2]['content']=='def solve(x):\n    return x\n'
     assert task.contract not in messages[1]['content']
-    assert task.contract in messages[-1]['content']
+    assert task.contract in messages[-2]['content']
+    assert messages[-1]['content']=='def solve(x):\n'
+
+
+def test_response_prefix_is_prompted_before_generation_and_all_returned_bytes_survive():
+    from depverify.local_model import infer
+    class Tokenizer:
+        def apply_chat_template(self,messages,**kwargs):
+            assert kwargs=={'tokenize':True,'add_generation_prompt':False,'continue_final_message':True}
+            assert messages[-1]['content']=='def solve(x):\n'
+            return [1]*100
+    generated='    return x\n'
+    result=infer(None,Tokenizer(),[{'role':'assistant','content':'def solve(x):\n'}],
+                 'proposal',1,.2,lambda *args:{'status':'ok','text':generated,'output_tokens':3})
+    assert result['text']=='def solve(x):\n'+generated
+    assert result['generated_text']==generated
+    assert result['input_tokens']==100 and result['output_tokens']==3
 
 
 @pytest.mark.parametrize('worker,content',[(unread_worker,'x'*60000),(partial_worker,'x')],ids=['blocked-send','partial-response'])
