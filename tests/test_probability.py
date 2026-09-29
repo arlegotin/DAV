@@ -124,3 +124,35 @@ def test_wrong_check_order_or_object_npz_cannot_load(tmp_path):
     np.savez(path, metadata=np.array({"schema_version": 1}, dtype=object))
     with pytest.raises(ValueError):
         p.load_tables(path, expected_version="fake-v1")
+
+
+def overflowing_joint():
+    joint = np.zeros((2, 3, 3, 3, 3), dtype=np.uint64)
+    joint[0, 0, 0, 0, 0] = 2**63
+    joint[1, 0, 0, 0, 0] = 2**63
+    joint[0, 1, 0, 0, 0] = 1
+    return joint
+
+
+def test_integer_overflow_cannot_become_a_normalized_probability_or_acceptance():
+    p, joint = probability(), overflowing_joint()
+    for query in (p.validate_joint, lambda j: p.posterior_correct(j, EMPTY_HISTORY)):
+        with pytest.raises(ValueError):
+            query(joint)
+    from depverify.policy import make_policy
+    policy = make_policy({g: joint for g in LINEAGES}, {})
+    assert policy("same_lineage", frozenset(), EMPTY_HISTORY) == ("DEFER", "calibration_invalid")
+
+
+@pytest.mark.parametrize("suffix", [".json", ".npz"])
+def test_loaded_overflowing_probability_table_is_rejected(tmp_path, suffix):
+    path = tmp_path / ("overflow" + suffix)
+    header = {"schema_version": 1, "check_ids": list(CHECK_IDS), "verdicts": list(VERDICTS), "model_version": "fake-v1"}
+    tables = {g: overflowing_joint() for g in LINEAGES}
+    if suffix == ".json":
+        write_json_atomic(path, header | {"tables": {g: j.tolist() for g, j in tables.items()}})
+    else:
+        import json
+        np.savez(path, metadata=np.array(json.dumps(header)), **tables)
+    with pytest.raises(ValueError):
+        probability().load_tables(path, expected_version="fake-v1")

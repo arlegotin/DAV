@@ -107,6 +107,21 @@ def test_timeout_flags_cannot_be_loaded_as_success(actor_metadata, check_metadat
             r.CheckResult("1" * 64, check, "PASS", "ok", "", 180., check_metadata | {"timed_out": True})
 
 
+@pytest.mark.parametrize("status", ["output_limit", "candidate_failure", "candidate_timeout", "unsupported_status"])
+def test_failed_check_status_cannot_load_as_pass(check_metadata, status):
+    r = records()
+    value = r.to_dict(r.CheckResult("1" * 64, "T", "PASS", "ok", "", 10., check_metadata))
+    value["status"] = status
+    with pytest.raises(ValueError):
+        r.from_dict(r.CheckResult, value)
+
+
+@pytest.mark.parametrize("status", ["candidate_failure", "candidate_timeout"])
+def test_candidate_failure_status_requires_an_executable_check(check_metadata, status):
+    with pytest.raises(ValueError):
+        records().CheckResult("1" * 64, "R1", "FAIL", status, "", 10., check_metadata)
+
+
 def test_unsupported_schema_and_extra_record_fields_fail(task_fields):
     r = records()
     data = r.to_dict(r.Task(**task_fields))

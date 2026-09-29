@@ -160,3 +160,34 @@ def test_split_roots_cannot_overlap_and_episode_ids_are_unique(task_fields):
     with pytest.raises(ValueError):
         t.validate_splits([train, train])
     t.validate_splits([train, replace(train, episode_id="variant")])
+
+
+def test_parent_symlink_substitution_after_preflight_cannot_redirect_apply(tmp_path, task_fields, actor_metadata):
+    import shutil
+    t, task = tasks(), Task(**task_fields)
+    parent, outside = tmp_path / "parent", tmp_path / "outside"
+    outside.mkdir()
+    root = t.materialize(task, parent)
+    assert t.preflight(task, REPLACEMENT, root)[0] == "ok"
+    shutil.copytree(root, outside / root.name)
+    saved = tmp_path / "saved-parent"
+    parent.rename(saved)
+    parent.symlink_to(outside, target_is_directory=True)
+    proposal, identity = proposal_and_identity(task, actor_metadata)
+    result = t.apply_or_defer(task, proposal, "ACCEPT", root, identity)
+    assert result["status"] == "invalid_root"
+    assert (outside / root.name / "candidate.py").read_text() == task.base_files["candidate.py"]
+    assert (saved / root.name / "candidate.py").read_text() == task.base_files["candidate.py"]
+
+
+def test_replacing_marked_directory_identity_cannot_reuse_preflight(tmp_path, task_fields, actor_metadata):
+    import shutil
+    t, task = tasks(), Task(**task_fields)
+    root = t.materialize(task, tmp_path)
+    assert t.preflight(task, REPLACEMENT, root)[0] == "ok"
+    saved = tmp_path / "original-disposable"
+    root.rename(saved)
+    shutil.copytree(saved, root)
+    proposal, identity = proposal_and_identity(task, actor_metadata)
+    assert t.apply_or_defer(task, proposal, "ACCEPT", root, identity)["status"] == "stale_identity"
+    assert (root / "candidate.py").read_text() == task.base_files["candidate.py"]

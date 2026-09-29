@@ -42,6 +42,14 @@ def _task_hash(task: Task) -> str:
     return sha256_bytes(canonical_json(to_dict(task)))
 
 
+def _root_identity(root: Path) -> dict:
+    absolute = root.absolute()
+    if any(path.is_symlink() for path in (absolute, *absolute.parents)):
+        raise _Rejected("invalid_root")
+    stat = absolute.stat()
+    return {"path": str(absolute), "device": stat.st_dev, "inode": stat.st_ino}
+
+
 def validate_splits(tasks: Sequence[Task]) -> None:
     seen_ids, root_splits = set(), {}
     for task in tasks:
@@ -63,18 +71,20 @@ def materialize(task: Task, parent: Path) -> Path:
         path = _safe_file(root, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(body.encode("utf-8"))
-    write_json_atomic(root / _MARKER, {"schema_version": 1, "task_hash": _task_hash(task)})
+    write_json_atomic(root / _MARKER, {"schema_version": 1, "task_hash": _task_hash(task),
+                                     "root_identity": _root_identity(root)})
     return root
 
 
 def _snapshot(task: Task, root: Path) -> dict[str, str]:
+    identity = _root_identity(root)
     if root.is_symlink() or not root.is_dir() or not root.name.startswith(".depverify-"):
         raise _Rejected("invalid_root")
     marker = root / _MARKER
     if marker.is_symlink() or not marker.is_file():
         raise _Rejected("invalid_root")
     try:
-        if read_json(marker) != {"schema_version": 1, "task_hash": _task_hash(task)}:
+        if read_json(marker) != {"schema_version": 1, "task_hash": _task_hash(task), "root_identity": identity}:
             raise _Rejected("stale_identity")
     except (OSError, ValueError) as exc:
         if isinstance(exc, _Rejected):

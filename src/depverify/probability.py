@@ -17,9 +17,9 @@ class ZeroSupportError(ValueError):
 def validate_joint(joint: np.ndarray) -> None:
     if not isinstance(joint, np.ndarray) or joint.shape != (2, 3, 3, 3, 3) or joint.dtype.kind not in "fiu":
         raise ValueError("joint table must be numeric with shape (2,3,3,3,3)")
-    if not np.isfinite(joint).all() or np.any(joint < 0):
-        raise ValueError("joint mass must be finite and nonnegative")
-    if not np.isclose(joint.sum(), 1., atol=1e-12, rtol=0.):
+    if not np.isfinite(joint).all() or np.any(joint < 0) or np.any(joint > 1):
+        raise ValueError("each joint mass must be finite and between zero and one")
+    if not np.isclose(joint.sum(dtype=np.float64), 1., atol=1e-12, rtol=0.):
         raise ValueError("joint table must sum to one")
     if np.any(joint[1, :, :, 1, :] != 0):
         raise ValueError("correct labels cannot coexist with genuine public FAIL")
@@ -37,16 +37,16 @@ def _matching(joint: np.ndarray, history: History) -> np.ndarray:
 
 def history_mass(joint: np.ndarray, history: History) -> float:
     validate_joint(joint)
-    return float(_matching(joint, history).sum())
+    return float(_matching(joint, history).sum(dtype=np.float64))
 
 
 def posterior_correct(joint: np.ndarray, history: History) -> float:
     validate_joint(joint)
     selected = _matching(joint, history)
-    mass = float(selected.sum())
+    mass = float(selected.sum(dtype=np.float64))
     if mass <= 0.:
         raise ZeroSupportError("zero-support acquired history")
-    return float(selected[1].sum() / mass)
+    return float(selected[1].sum(dtype=np.float64) / mass)
 
 
 def predictive(joint: np.ndarray, history: History, check_id: str) -> np.ndarray:
@@ -57,14 +57,14 @@ def predictive(joint: np.ndarray, history: History, check_id: str) -> np.ndarray
     index = CHECK_IDS.index(check_id)
     if history[index] is not None:
         raise ValueError("check already acquired")
-    mass = float(_matching(joint, history).sum())
+    mass = float(_matching(joint, history).sum(dtype=np.float64))
     if mass <= 0.:
         raise ZeroSupportError("zero-support acquired history")
     probabilities = []
     for verdict in VERDICTS:
         branch = list(history)
         branch[index] = verdict
-        probabilities.append(float(_matching(joint, tuple(branch)).sum()) / mass)
+        probabilities.append(float(_matching(joint, tuple(branch)).sum(dtype=np.float64)) / mass)
     return np.array(probabilities)
 
 

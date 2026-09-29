@@ -211,9 +211,15 @@ class CheckResult:
         _metadata(self.metadata, {"model_revision", "tokenizer_revision", "check_version", "check_seed",
                                   "prompt_hash", "source_hashes", "source_versions", "input_tokens", "output_tokens",
                                   "timed_out", "cache_hit", "machine_profile_hash", "environment_hash", "attempt_ids"})
-        if self.status in {"format_error", "truncated", "input_over_budget", "unavailable", "model_timeout",
-                           "infrastructure_error", "refusal"} and self.verdict != "UNKNOWN":
-            raise ValueError("failed acquisition must be UNKNOWN")
+        if self.status in {"candidate_failure", "candidate_timeout"}:
+            if self.check_id != "T" or self.verdict not in {"FAIL", "UNKNOWN"}:
+                raise ValueError("candidate failure status requires FAIL or UNKNOWN from T")
+        elif self.status in {"format_error", "truncated", "input_over_budget", "unavailable", "model_timeout",
+                             "infrastructure_error", "refusal", "output_limit"}:
+            if self.verdict != "UNKNOWN":
+                raise ValueError("failed acquisition must be UNKNOWN")
+        elif self.status != "ok":
+            raise ValueError("unsupported check status")
         if self.metadata["timed_out"]:
             if self.verdict == "PASS" or (self.check_id != "T" and self.verdict != "UNKNOWN"):
                 raise ValueError("timed-out acquisition cannot provide successful review evidence")
