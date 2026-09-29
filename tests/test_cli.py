@@ -54,3 +54,20 @@ def test_fake_cli_does_not_import_mlx_or_contact_container_engine(tmp_path, monk
     monkeypatch.setattr("builtins.__import__", guarded_import)
     monkeypatch.chdir(tmp_path)
     assert cli.main(["doctor", "--fake"]) == 0
+
+
+def test_prefix_report_includes_recorded_blocked_prerequisites(tmp_path):
+    from depverify.pipeline import write_gate
+    from depverify.records import GateResult
+    result = run_cli(tmp_path, "simulate", "--suite", "core")
+    assert result.returncode == 0
+    gate = GateResult("M1", "BLOCKED", "2026-09-29T20:00:00+00:00", {"profile": "a" * 64},
+                      {"workspace_space": False}, ("Workspace space below the 20 GiB target.",), (), {})
+    write_gate(tmp_path / "runs/m1/gate.json", gate)
+    report = run_cli(tmp_path, "report")
+    assert report.returncode == 0
+    assert "M1: BLOCKED" in report.stdout
+    assert "Workspace space below" in report.stdout
+    assert "M2–M5: unexecuted" in report.stdout
+    assert "Scientific status: INCONCLUSIVE" in report.stdout
+    assert "M1–M6: unexecuted" not in report.stdout

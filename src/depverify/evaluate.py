@@ -385,5 +385,15 @@ def render_report(run_dir: Path) -> str:
              "| Control | Result |", "| --- | --- |"]
     lines.extend(f"| {c['id']} | {'PASS' if c['passed'] else 'FAIL'} |" for c in result["controls"])
     lines.extend(["", f"Raw artifacts: `{(root / result['attempt_path']).as_posix()}`.", "",
-                  "Simulation alone does not authorize a gate; ordinary tests and current artifact fingerprints are required.", "", "M1–M6: unexecuted."])
+                  "Simulation alone does not authorize a gate; ordinary tests and current artifact fingerprints are required."])
+    prerequisite_gate = root.parent / "m1/gate.json"
+    if prerequisite_gate.exists():
+        from .records import GateResult, from_dict
+        gate = from_dict(GateResult, read_json(prerequisite_gate))
+        if gate.stage != "M1":
+            raise ValueError("M1 report gate has the wrong stage")
+        lines.extend(["", f"M1: {gate.status} (recorded execution gate).", *gate.reasons,
+                      "", "M2–M5: unexecuted. This report summarizes the available evidence prefix."])
+    else:
+        lines.extend(["", "M1–M6: unexecuted."])
     return "\n".join(lines) + "\n"
