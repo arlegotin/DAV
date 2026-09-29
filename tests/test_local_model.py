@@ -3,6 +3,7 @@ import time
 import threading
 import os
 import struct
+from types import SimpleNamespace
 from pathlib import Path
 import pytest
 from depverify.pipeline import resume_attempts
@@ -150,6 +151,23 @@ def test_response_prefix_is_prompted_before_generation_and_all_returned_bytes_su
     assert result['text']=='def solve(x):\n'+generated
     assert result['generated_text']==generated
     assert result['input_tokens']==100 and result['output_tokens']==3
+
+
+def test_generation_decodes_tokens_faithfully_instead_of_cleaned_stream_display():
+    from depverify.local_model import consume_generation
+    class Tokenizer:
+        eos_token_ids={99}
+        def decode(self,tokens,**kwargs):
+            assert tokens==[1,2]
+            assert kwargs=={'clean_up_tokenization_spaces':False,'skip_special_tokens':False}
+            return '    first = 1\n    return first\n'
+    base={'prompt_tokens':10,'generation_tokens':3,'prompt_tps':100,'generation_tps':100,'peak_memory':1}
+    responses=[SimpleNamespace(**base,token=1,text='   first = 1\n',finish_reason=None),
+               SimpleNamespace(**base,token=2,text='    return first\n',finish_reason=None),
+               SimpleNamespace(**base,token=99,text='',finish_reason='stop')]
+    result=consume_generation(Tokenizer(),responses)
+    assert result['text']=='    first = 1\n    return first\n'
+    assert result['generated_token_ids']==[1,2]
 
 
 @pytest.mark.parametrize('worker,content',[(unread_worker,'x'*60000),(partial_worker,'x')],ids=['blocked-send','partial-response'])

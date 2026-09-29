@@ -128,14 +128,22 @@ def _native_generation(model, tokenizer, tokens, cap, seed, temperature):
     from mlx_lm import stream_generate
     from mlx_lm.sample_utils import make_sampler
     mx.random.seed(seed)
-    chunks, final = [], None
     # No transcript or KV cache is supplied: every request starts fresh.
-    for response in stream_generate(model, tokenizer, tokens, max_tokens=cap, sampler=make_sampler(temp=temperature)):
-        chunks.append(response.text)
+    return consume_generation(tokenizer,stream_generate(model,tokenizer,tokens,max_tokens=cap,sampler=make_sampler(temp=temperature)))
+
+
+def consume_generation(tokenizer,responses):
+    generated,final=[],None
+    for response in responses:
+        if response.token not in tokenizer.eos_token_ids:generated.append(response.token)
         final = response
     if final is None:
         raise RuntimeError('generation returned no measurement')
-    return {'status': 'truncated' if final.finish_reason == 'length' else 'ok', 'text': ''.join(chunks),
+    # MLX's display detokenizer trims an initial space, which corrupts code
+    # indentation. Decode the actual generated IDs once with cleanup disabled.
+    text=tokenizer.decode(generated,clean_up_tokenization_spaces=False,skip_special_tokens=False)
+    return {'status': 'truncated' if final.finish_reason == 'length' else 'ok', 'text': text,
+            'generated_token_ids':generated,
             'input_tokens': final.prompt_tokens, 'output_tokens': final.generation_tokens,
             'prompt_tps': final.prompt_tps, 'generation_tps': final.generation_tps,
             'peak_memory_bytes': int(final.peak_memory * 1e9), 'finish_reason': final.finish_reason}
