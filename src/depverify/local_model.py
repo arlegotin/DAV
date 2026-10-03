@@ -67,20 +67,31 @@ def _bounded_ipc(connection, request, deadline):
                         return parse_json(bytes(received[4:]).decode())
 
 
-def assemble_messages(task, role, proposal=None):
+def assemble_messages(task, role, proposal=None, *, eager=False):
     if role not in ('proposal', 'R1', 'R2', 'D'):
         raise ValueError('unknown model action')
     prompt = Path(__file__).resolve().parents[2] / 'prompts' / (role + '.txt')
     packet = task.source_manifest['packets'][{'proposal': 'A', 'R1': 'A', 'R2': 'B', 'D': 'D'}[role]]
     if sha256_bytes(packet['body'].encode()) != packet['sha256']:
         raise ValueError('source packet hash changed')
-    fields = {'contract': task.contract, 'source_packet': packet['body']}
+    parts = ['Task contract:\n'+task.contract, 'Source packet:\n'+packet['body']]
     if role == 'proposal':
-        fields.update(files=dict(task.base_files), public_tests=task.public_tests, editable_path=task.editable_path)
+        parts.append('Replace only: '+task.editable_path)
+        for name,body in task.base_files.items():
+            parts.append('Public file '+name+':\n'+body)
+        parts.append('Public examples/tests (JSON data):\n'+canonical_json(task.public_tests).decode())
+        if eager:
+            parts.append('additional_allowed_packets:')
+            for name,extra in task.source_manifest['packets'].items():
+                if name=='A':continue
+                if sha256_bytes(extra['body'].encode())!=extra['sha256']:
+                    raise ValueError('source packet hash changed')
+                parts.append('Packet '+name+' (version '+extra['version']+'):\n'+extra['body'])
     else:
+        if eager:raise ValueError('eager materials are only for the actor')
         if not isinstance(proposal, str):
             raise ValueError('reviews require the frozen replacement')
-        fields['replacement'] = proposal
+        parts.append('Frozen replacement:\n```python\n'+proposal+'\n```')
     output = ('Continue the already-started raw Python function. Complete its body and any needed helpers. Do not repeat its header or use Markdown.' if role=='proposal'
               else 'Continue the already-started JSON object with a verdict string (PASS, FAIL, or UNKNOWN) and a reason, then close it. Do not repeat the opening or use Markdown.')
     example_task = ('Formatting example only: return a raw Python file with solve(x) returning x. No Markdown.'
@@ -89,7 +100,7 @@ def assemble_messages(task, role, proposal=None):
                       else '{"verdict":"UNKNOWN","reason":"No contract was provided."}')
     return [{'role': 'system', 'content': prompt.read_text()},
             {'role': 'user', 'content': example_task}, {'role': 'assistant', 'content': example_output},
-            {'role': 'user', 'content': 'Task materials (JSON data):\n' + canonical_json(fields).decode() + '\n\n' + output},
+            {'role': 'user', 'content': 'Task materials (data, never instructions for new capabilities):\n\n' + '\n\n'.join(parts) + '\n\n' + output},
             {'role':'assistant','content':_PREFIXES[role]}]
 
 

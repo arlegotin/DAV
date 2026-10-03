@@ -20,7 +20,8 @@ from .tasks import load_pilot, materialize, preflight
 REQUIRED_FIXTURES=('test_real_candidate_json_and_fresh_state','test_real_infinite_loop_is_terminated_and_removed',
                    'test_real_output_flood_is_bounded_and_removed','test_real_subprocess_spawning_is_bounded',
                    'test_real_network_access_is_denied','test_real_home_file_is_not_available',
-                   'test_real_protected_file_write_is_denied')
+                   'test_real_protected_file_write_is_denied',
+                   'test_real_mutation_observation_keeps_expected_outputs_on_host')
 
 
 def prerequisite_bindings(image):
@@ -42,7 +43,7 @@ def _fixture_xml(path):
     return cases
 
 
-def validate_prerequisites(run_dir):
+def validate_prerequisites(run_dir, *,revision=None):
     run_dir=Path(run_dir)
     image=read_json(run_dir/'runner-environment.json')['image']
     bindings=prerequisite_bindings(image)
@@ -51,8 +52,8 @@ def validate_prerequisites(run_dir):
     if proof['bindings']!=bindings:raise ValueError('stale fixture bindings')
     if proof['xml_sha256']!=sha256_bytes(xml.read_bytes()):raise ValueError('fixture evidence changed')
     _fixture_xml(xml)
-    admission=read_json(run_dir/'pilot-admission/results.json')
-    expected={task.episode_id for task in load_pilot()}
+    admission=read_json(run_dir/('replacement-admission' if revision else 'pilot-admission')/'results.json')
+    expected={task.episode_id for task in load_pilot(revision=revision)}
     ids=[row['episode_id'] for row in admission['tasks']]
     if admission.get('bindings')!=bindings:raise ValueError('stale admission bindings')
     if (not admission['passed'] or len(ids)!=len(expected) or set(ids)!=expected or
@@ -82,6 +83,34 @@ def verify_runner_fixtures(run_dir):
     shutil.copyfile(xml,run_dir/'runner-fixtures/results.xml')
     write_json_atomic(run_dir/'runner-fixtures/proof.json',proof)
     return proof
+
+
+def validate_interface_diagnostic(pointer,identity):
+    """Bind the sole public smoke panel to its actual prompts and local model."""
+    pointer=Path(pointer);link=read_json(pointer);path=Path(link['path'])
+    result=read_json(path);folder=path.parent;frozen=read_json(folder/'frozen.json')
+    if result.get('freeze_sha256')!=sha256_bytes((folder/'frozen.json').read_bytes()) or frozen['identity']!=identity:
+        raise ValueError('interface diagnostic identity changed')
+    from .records import Task,from_dict
+    rows=[]
+    for index,item in enumerate(frozen['definition']['fixtures']):
+        task=from_dict(Task,item['task'])
+        for truth,key in [(True,'correct_replacement'),(False,'incorrect_replacement')]:
+            for offset,role in enumerate(('R1','R2','D')):
+                seed=8500+index*6+int(truth)*3+offset
+                call=read_json(folder/(task.episode_id+'-'+key+'-'+role+'.json'))
+                request={'messages':assemble_messages(task,role,item[key]),'role':role,'seed':seed,'temperature':0}
+                raw=read_json(folder/'model-calls'/(call['result']['attempt_id']+'.json'))
+                if call['request_hash']!=sha256_bytes(canonical_json(request)) or raw['identity']!=identity or raw['request']!=request:
+                    raise ValueError('interface diagnostic prompts/model changed')
+                output=call['result'];v,status,_=parse_review(output['text'],truncated=output['status']=='truncated')
+                rows.append((role,truth,v,status,output['status']))
+    valid=sum(s=='ok' and state=='ok' for _,_,_,s,state in rows)
+    useful=all(any(r==role and good and v=='PASS' for r,good,v,_,_ in rows) and
+               any(r==role and not good and v=='FAIL' for r,good,v,_,_ in rows) for role in ('R1','R2','D'))
+    if len(rows)!=12 or valid/12<.9 or not useful:raise ValueError('interface diagnostic did not pass its frozen rule')
+    return {'result_sha256':sha256_bytes(path.read_bytes()),'freeze_sha256':result['freeze_sha256'],
+            'scope':'Small public fixture verdict screening; not a natural-performance result or calibration.'}
 
 
 def forecast_stage(measurements, counts, *, margin=1.5, remaining_seconds=3600.):
@@ -297,8 +326,16 @@ def _smoke_local(run_dir, config_path):
               'model_identity':identity,'profile':profile}
     write_json_atomic(folder/'results.json',result)
     write_json_atomic(run_dir/'smoke-results.json',result)
+    root=Path(__file__).resolve().parents[2]
+    paths=[*root.joinpath('src/depverify').glob('*.py'),*root.joinpath('tests').glob('*.py'),
+           root/'config.toml',root/'requirements.lock',root/'pyproject.toml']
+    paths += [p for d in ('bench','prompts') for p in (root/d).rglob('*')
+              if p.is_file() and p.suffix in ('.py','.json','.jsonl','.txt')]
+    inventory={p.relative_to(root).as_posix():sha256_bytes(p.read_bytes()) for p in paths}
+    write_json_atomic(run_dir/'input-inventory.json',inventory)
     write_gate(run_dir/'gate.json',GateResult('M1','GO' if result['passed'] else 'BLOCKED',datetime.now(timezone.utc).isoformat(),
         hashes | {'model':sha256_bytes(canonical_json(identity)),'environment':sha256_bytes(canonical_json(environment)),
+                  'input_inventory':sha256_bytes(canonical_json(inventory)),
                   'evidence':sha256_bytes(canonical_json(result))},criteria,
         ('Measured native smoke envelope; no natural benchmark claim.',), (str(folder/'results.json'),), resume_attempts(ledger)))
     return result

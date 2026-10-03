@@ -28,8 +28,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     collect.add_argument("--split", choices=("pilot", "train", "dev", "test"), required=True)
     collect.add_argument("--resume", action="store_true")
     collect.add_argument("--dry-run", action="store_true")
+    collect.add_argument("--revision",choices=('interface-v1',))
     collect.add_argument("--config", type=Path, default=REPO_ROOT / "config.toml")
-    collect.add_argument("--run-dir", type=Path, default=Path("runs/m2"))
+    collect.add_argument("--run-dir", type=Path)
     evaluate = commands.add_parser("evaluate", help="Score the M2 development-only pilot")
     evaluate.add_argument("--stage", choices=("pilot", "dev", "test"), required=True)
     evaluate.add_argument("--config", type=Path, default=REPO_ROOT / "config.toml")
@@ -57,8 +58,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             result = smoke_local(args.run_dir, args.config)
         elif args.command == "collect":
             from .collection import collect_pilot
-            result = collect_pilot(args.run_dir, args.config, resume=args.resume,
-                                   dry_run=args.dry_run, split=args.split)
+            result = collect_pilot(args.run_dir or Path('runs/m2-replacement' if args.revision else 'runs/m2'), args.config, resume=args.resume,
+                                   dry_run=args.dry_run, split=args.split,revision=args.revision)
         elif args.command == "evaluate":
             from .pilot import evaluate_pilot
             result = evaluate_pilot(args.run_dir, args.config)

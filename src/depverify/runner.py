@@ -211,6 +211,12 @@ class ContainerRunner:
                             if not isinstance(response["outputs"], list) or len(response["outputs"]) != len(inputs):
                                 raise ValueError("candidate response count mismatch")
                             result.update(status="ok", outputs=response["outputs"])
+                            if 'input_mutated' in response:
+                                flags=response['input_mutated']
+                                if (not isinstance(flags,list) or len(flags)!=len(inputs) or
+                                        any(type(flag) is not bool for flag in flags)):
+                                    raise ValueError('invalid input mutation observations')
+                                result['input_mutated']=flags
                         elif response.get("status") == "candidate_failure":
                             result["status"] = "candidate_failure"
                         else:

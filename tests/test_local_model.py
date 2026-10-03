@@ -66,7 +66,18 @@ def test_prompt_contains_only_fixed_public_inputs_and_no_previous_verdict():
         assert 'independent_expected' not in text
         assert 'previous_verdict' not in text
         if role != 'proposal':
-            assert json.loads(messages[-2]['content'].split('\n')[1])['replacement'] == proposal
+            assert proposal in messages[-2]['content']
+
+
+def test_model_sees_readable_multiline_code_and_full_contract():
+    from depverify.local_model import assemble_messages
+    task=load_pilot()[0]
+    replacement='def solve(x):\n    values = list(x)\n    return values\n'
+    actor=assemble_messages(task,'proposal')[-2]['content']
+    review=assemble_messages(task,'R1',replacement)[-2]['content']
+    assert task.base_files[task.editable_path] in actor
+    assert replacement in review
+    assert task.contract in actor and task.contract in review
 
 
 def test_worker_timeout_kills_model_and_retains_all_costs(tmp_path):

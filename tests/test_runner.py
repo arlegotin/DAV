@@ -172,3 +172,10 @@ def test_real_protected_file_write_is_denied(real_runner):
     result = real_runner.run(FILES | {"candidate.py": source}, "solve", [1])
     assert result["outputs"] == ["DENIED"], result
     assert result["cleanup_ok"] is True
+
+
+def test_real_mutation_observation_keeps_expected_outputs_on_host(real_runner):
+    result=real_runner.run({'candidate.py':'def solve(x):\n    x.sort()\n    return x\n'},'solve',[[2,1],[1,2]])
+    assert result['status']=='ok'
+    assert result['outputs']==[[1,2],[1,2]]
+    assert result['input_mutated']==[True,False]

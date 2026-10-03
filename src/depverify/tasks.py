@@ -13,11 +13,13 @@ _MARKER = ".depverify-task.json"
 _REPLACEMENT_BYTES = 64 * 1024
 
 
-def load_pilot() -> list[Task]:
+def load_pilot(*,revision=None) -> list[Task]:
     from .records import from_dict, parse_json
     public = Path(__file__).resolve().parents[2] / "bench/public"
-    manifest = read_json(public / "pilot-manifest.json")
-    data = (public / "pilot.jsonl").read_bytes()
+    if revision not in (None,'interface-v1'):raise ValueError('unknown pilot revision')
+    stem='replacement-pilot' if revision else 'pilot'
+    manifest = read_json(public / (stem+"-manifest.json"))
+    data = (public / (stem+".jsonl")).read_bytes()
     if sha256_bytes(data) != manifest["task_sha256"]:
         raise ValueError("pilot task manifest changed")
     tasks = [from_dict(Task, parse_json(line.decode())) for line in data.splitlines()]

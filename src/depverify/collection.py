@@ -9,9 +9,9 @@ import time
 
 from .checks import parse_review
 from .local_model import LocalModel, assemble_messages
-from .pipeline import (REPO_ROOT, BudgetStop, implementation_hashes, load_config,
+from .pipeline import (REPO_ROOT, BudgetStop, implementation_hashes, load_config, record_revision,
                        require_gate, resume_attempts, settle)
-from .records import (CHECK_IDS, CheckResult, Proposal, canonical_json, from_dict,
+from .records import (CHECK_IDS, CheckResult, GateResult, Proposal, canonical_json, from_dict,
                       parse_json, proposal_key, read_json, sha256_bytes, to_dict, write_json_atomic)
 from .runner import ContainerRunner
 from .smoke import MemoryMonitor, _limits, forecast_stage, memory_check, validate_prerequisites
@@ -73,18 +73,9 @@ def schedule(tasks):
 
 
 def actor_messages(task, system):
-    messages = assemble_messages(task, 'proposal')
-    if system == 'eager':
-        # Add only already allowable documentation before inference. No results/labels.
-        prefix = 'Task materials (JSON data):\n'
-        body, instruction = messages[-2]['content'][len(prefix):].split('\n\n',1)
-        fields = parse_json(body)
-        fields['additional_allowed_packets'] = {key:dict(packet) for key,packet in task.source_manifest['packets'].items()
-                                                if key != 'A'}
-        messages[-2] = {'role':'user','content':prefix+canonical_json(fields).decode()+'\n\n'+instruction}
-    elif system != 'natural':
+    if system not in ('natural','eager'):
         raise ValueError('unknown pilot system')
-    return messages
+    return assemble_messages(task,'proposal',eager=system=='eager')
 
 
 def lineage(task):
@@ -133,7 +124,7 @@ def durable_call(path, request, invoke, *, raw_dir=None, matches=None, ledger=No
     return result
 
 
-def require_pilot_gates(run_dir, config_path):
+def require_pilot_gates(run_dir, config_path, *,revision=None):
     run_dir = Path(run_dir)
     require_gate(run_dir.parent/'m0/gate.json',stage='M0',expected_hashes=implementation_hashes(config_path))
     m1 = run_dir.parent/'m1'
@@ -149,8 +140,40 @@ def require_pilot_gates(run_dir, config_path):
                 'evidence':sha256_bytes(canonical_json(smoke)),
                 'config':implementation_hashes(config_path)['config']}
     require_gate(m1/'gate.json',stage='M1',expected_hashes=expected)
-    validate_prerequisites(m1)
+    validate_prerequisites(m1,revision=revision)
     return identity,environment,smoke
+
+
+REVISION_REASON='One readable multiline task interface after contract-copying and repeated-source pilot defects; six fresh roots, unchanged caps and economics.'
+
+
+def require_revision(run_dir,revision):
+    run_dir=Path(run_dir)
+    if revision!='interface-v1':raise ValueError('unknown or additional pilot revision')
+    path=run_dir.parent/'m2/gate.json'
+    if not path.exists():raise ValueError('original research gate is required before a replacement pilot')
+    try:gate=from_dict(GateResult,read_json(path))
+    except (ValueError,TypeError,KeyError) as exc:raise ValueError('original research gate is malformed') from exc
+    if gate.stage!='M2' or gate.status not in ('INCONCLUSIVE','NO_GO'):
+        raise ValueError('original research gate does not permit a replacement pilot')
+    original_dir=path.parent
+    for name,key in [('frozen-pilot.json','frozen_pilot'),('analysis.json','analysis')]:
+        if sha256_bytes(canonical_json(read_json(original_dir/name)))!=gate.artifact_hashes.get(key):
+            raise ValueError('original research gate artifact binding changed')
+    original=load_pilot();fresh=load_pilot(revision=revision)
+    if {t.root_group_id for t in original}&{t.root_group_id for t in fresh}:
+        raise ValueError('replacement roots overlap original pilot')
+    _ensure_cleanup_records(original_dir)
+    original_manifest=read_json(original_dir/'frozen-pilot.json')
+    for system,ids in [('natural',original_manifest['task_hashes']),('eager',original_manifest['eager_task_ids'])]:
+        for episode in ids:validated_episode(original_dir,system,episode)
+    from .smoke import validate_interface_diagnostic
+    proof=validate_interface_diagnostic(run_dir.parent/'audit-2026-10-03/interface-smoke-result.json',
+                                      read_json(run_dir.parent/'m1/model-identity.json'))
+    revisions=resume_attempts(run_dir.parent/'work-budget.jsonl')['revisions']
+    if revisions.get('pilot',REVISION_REASON)!=REVISION_REASON:
+        raise ValueError('pilot revision allowance exhausted')
+    return proof
 
 
 def _remaining(ledger):
@@ -248,7 +271,8 @@ def _public_check(folder, runner, task, proposal):
         runs.append(_execute(folder/'T-timeout-confirmation.json',runner,task,proposal.replacement,inputs))
     status = result['status']
     if status == 'ok':
-        good = canonical_json(result['outputs']) == canonical_json([test['expected'] for test in task.public_tests])
+        from .grading import execution_matches
+        good = execution_matches(task,result,[test['expected'] for test in task.public_tests])
         verdict = 'PASS' if good else 'FAIL'
     elif status == 'candidate_failure':verdict='FAIL'
     elif status == 'candidate_timeout' and runs[-1]['status']=='candidate_timeout':verdict='FAIL'
@@ -260,7 +284,7 @@ def _public_check(folder, runner, task, proposal):
 
 def _grade(folder, runner, task, proposal):
     # Private references/expected outputs are only used on this trusted host.
-    from .grading import private_case
+    from .grading import private_case, execution_matches
     if proposal.status != 'ok':
         unresolved = proposal.status in ('infrastructure_error','model_timeout','interrupted')
         return {'episode_id':task.episode_id,'label':'LABEL_UNRESOLVED' if unresolved else 0,
@@ -274,7 +298,7 @@ def _grade(folder, runner, task, proposal):
         if repeated['status']!='candidate_timeout':
             return {'episode_id':task.episode_id,'label':'LABEL_UNRESOLVED','status':'unstable_timeout','elapsed_seconds':seconds}
     if result['status']=='infrastructure_error':label='LABEL_UNRESOLVED'
-    elif result['status']=='ok':label=int(canonical_json(result['outputs'])==canonical_json(case['expected']))
+    elif result['status']=='ok':label=int(execution_matches(task,result,case['expected']))
     else:label=0
     counterexamples = []
     if result['status']=='ok':
@@ -358,12 +382,14 @@ def collect_episode(task, system, run_dir, model, runner, manifest, row, *, guar
     return evidence
 
 
-def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'):
+def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot',revision=None):
     if split!='pilot':raise ValueError('only M2 pilot is implemented; later splits require their own GO gate')
     run_dir,config_path=Path(run_dir),Path(config_path)
-    identity,environment,smoke=require_pilot_gates(run_dir,config_path)
+    revision_proof=require_revision(run_dir,revision) if revision else None
+    identity,environment,smoke=(require_pilot_gates(run_dir,config_path,revision=revision) if revision
+                              else require_pilot_gates(run_dir,config_path))
     config=load_config(config_path)
-    tasks=load_pilot();rows=schedule(tasks);eager=eager_ids(tasks)
+    tasks=load_pilot(revision=revision);rows=schedule(tasks);eager=eager_ids(tasks)
     ledger=run_dir.parent/'work-budget.jsonl'
     _ensure_cleanup_records(run_dir,ledger=ledger)
     for system,selected in [('natural',tasks),('eager',[t for t in tasks if t.episode_id in eager])]:
@@ -393,6 +419,11 @@ def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'
                   'check_versions':{c:sha256_bytes(canonical_json({'adapter':sha256_bytes(Path(__file__).read_bytes()),
                                      'prompt':sha256_bytes((REPO_ROOT/'prompts'/(c+'.txt')).read_bytes()) if c!='T' else 'public-tests',
                                      'model':identity,'environment':environment})) for c in CHECK_IDS}}
+        if revision:
+            manifest.update(revision=revision,screen_version=2,revision_proof=revision_proof,
+                            audit_task_ids=[min(t.episode_id for t in tasks if t.root_group_id==group)
+                                           for group in sorted({t.root_group_id for t in tasks})])
+            record_revision(ledger,kind='pilot',reason=REVISION_REASON)
         if (run_dir/'frozen-pilot.json').exists() and not resume:
             raise ValueError('existing collection requires --resume; no new candidates')
         manifest=resume_freeze(run_dir/'frozen-pilot.json',manifest)

@@ -76,3 +76,41 @@ def test_failed_actor_environment_remains_unresolved_not_an_incorrect_patch():
     class Runner:
         def run(self,*args):raise AssertionError('no candidate to grade')
     assert grading.grade(task,make_proposal(task,'infrastructure_error'),Runner())['label']=='LABEL_UNRESOLVED'
+
+
+def test_single_timeout_is_not_a_reproducible_candidate_failure():
+    grading,load=api();task=load()[0]
+    class Runner:
+        count=0
+        def run(self,*args):
+            self.count+=1
+            return {'status':'candidate_timeout' if self.count==1 else 'infrastructure_error',
+                    'outputs':[],'elapsed_seconds':1.}
+    runner=Runner();result=grading.grade(task,make_proposal(task),runner)
+    assert result['label']=='LABEL_UNRESOLVED'
+    assert result['elapsed_seconds']==2.
+
+
+def test_correct_output_with_forbidden_input_mutation_is_rejected():
+    from dataclasses import replace
+    grading,load=api();task=load()[0]
+    task=replace(task,source_manifest=dict(task.source_manifest)|{'requirements':{'input_immutable':True}})
+    class Runner:
+        def run(self,*args):
+            return {'status':'ok','outputs':grading.private_case(task)['expected'],
+                    'input_mutated':[True]+[False]*(len(grading.private_case(task)['inputs'])-1),'elapsed_seconds':.1}
+    assert grading.grade(task,make_proposal(task),Runner())['label']==0
+
+
+def test_replacement_pilot_uses_fresh_roots_and_validated_independent_contracts():
+    grading,load=api()
+    tasks=load(revision='interface-v1')
+    assert len(tasks)==24
+    assert set(Counter(t.root_group_id for t in tasks).values())=={4}
+    assert not {t.root_group_id for t in tasks}&{t.root_group_id for t in load()}
+    for task in tasks:
+        case=grading.private_case(task)
+        assert case['expected']==case['independent_expected']
+        assert len(case['inputs'])>=10
+        assert task.source_manifest['requirements']['input_immutable'] is True
+        assert {'boundary','constant','public_example_only'}.issubset(case['mutants'])

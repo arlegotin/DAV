@@ -223,3 +223,32 @@ def test_empty_or_out_of_scope_completion_cannot_skip_validation(tmp_path, compl
     write_json_atomic(folder/'evidence.json', {'unvalidated':True})
     with pytest.raises(ValueError, match='complet'):
         collect_episode(task,'natural',tmp_path,None,None,{},schedule([task])[task.episode_id])
+
+
+def test_collection_private_grade_enforces_declared_input_immutability(tmp_path):
+    from dataclasses import replace
+    from depverify.collection import _grade
+    from depverify.grading import private_case
+    from depverify.records import Proposal
+    from depverify.pipeline import fake_actor_metadata
+    task=load_pilot()[0]
+    task=replace(task,source_manifest=dict(task.source_manifest)|{'requirements':{'input_immutable':True}})
+    case=private_case(task);body='def solve(x):\n    return x\n'
+    proposal=Proposal(task.episode_id,'a'*64,body,'ok',fake_actor_metadata(task,body),0.)
+    class Runner:
+        def run(self,*args):return {'status':'ok','outputs':case['expected'],
+            'input_mutated':[True]*len(case['inputs']),'elapsed_seconds':.1}
+    assert _grade(tmp_path,Runner(),task,proposal)['label']==0
+
+
+def test_replacement_collection_refuses_without_original_research_gate(tmp_path):
+    from depverify.collection import require_revision
+    with pytest.raises(ValueError,match='original.*gate'):
+        require_revision(tmp_path/'m2-replacement','interface-v1')
+
+
+def test_replacement_cannot_be_authorized_by_a_bare_status_file(tmp_path):
+    from depverify.collection import require_revision
+    write_json_atomic(tmp_path/'m2/gate.json',{'stage':'M2','status':'INCONCLUSIVE'})
+    with pytest.raises(ValueError,match='original.*gate'):
+        require_revision(tmp_path/'m2-replacement','interface-v1')
