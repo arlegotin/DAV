@@ -32,7 +32,8 @@ User-authorized work stayed on current `main`, with focused commits. Each ruling
 ## M2 completion on 3 October
 
 - Ruling: normal memory pressure over 30 seconds and current prerequisites permit resuming the exact frozen pilot — retain all previous proposals/checks and bill a fresh load/warmup — cost if wrong: changed runtime conditions could invalidate timing; the existing monitor still checkpoints sustained pressure or slowdown.
-- Ruling: the completed pilot has only three correct proposals and no economic selection headroom — record INCONCLUSIVE and leave M3–M5 unexecuted; do not use the optional replacement pilot without a demonstrated contract/prompt defect — cost if wrong: a different preregistered task/model setting might have useful headroom, which this run does not establish.
+- Ruling: the completed pilot has only three correct proposals and no economic selection headroom in the implemented four-check sequence screen — record INCONCLUSIVE and leave M3–M5 unexecuted; a documented defect or obvious difficulty mismatch can justify the one optional fresh-root pilot revision, which has not been used — cost if wrong: a different preregistered task/model setting might have useful headroom, which this run does not establish.
+- Clarification: post-pilot T then R2 replay reduces incorrect accepts from three to one while preserving three correct accepts. The screen omitted shorter sequences, so its result does not establish absence of all acquisition headroom. This outcome-informed diagnostic changes neither the gate nor the frozen inputs.
 
 ## Deferred minors (retained)
 

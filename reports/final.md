@@ -1,6 +1,6 @@
 # Dependency-aware verification: local result
 
-**INCONCLUSIVE. The complete M2 pilot did not establish enough useful verification headroom to advance.** After memory pressure cleared on 3 October, the unchanged frozen collection resumed and finished all 24 natural episodes and eight eager-grounding comparisons. Only **three natural proposals were correct**, below the required five. No fixed sequence beat every simple screening policy under the declared objective. No later research milestone was launched.
+**INCONCLUSIVE. The complete M2 pilot did not establish enough useful verification headroom to advance.** After memory pressure cleared on 3 October, the unchanged frozen collection resumed and finished all 24 natural episodes and eight eager-grounding comparisons. Only **three natural proposals were correct**, below the required five. No implemented four-check sequence beat every simple screening policy under the declared objective. No later research milestone was launched.
 
 | Milestone | Result |
 |---|---|
@@ -23,3 +23,5 @@ Memory pressure stayed normal in all 58 samples during the resumed collection. E
 [The M2 report](m2.md) contains the main policy table, verdict matrix, fixed trace examples, exploratory root-group intervals, eager comparison, latency and limitations. [All 32 screening policies](m2-screening-policies.csv), [machine-readable summary](m2-summary.json), [cost inventory](research-costs.json), and [artifact hashes](final-artifacts.json) preserve the available research outcome. Calibration break-even for a dependency-aware controller is not estimable because no controller benefit was established. Storage uses incremental uncached bytes per actual filesystem with a 1.5× margin and 1 GiB reserve; the blanket 20 GiB rule remains removed.
 
 Fresh verification passes **267 ordinary tests**, with seven opt-in container tests skipped; real container fixtures were exercised at M1. The unresolved quantity is whether a task/model setting with adequate correct-proposal support and useful reviewers has economic acquisition headroom. This run stops at its unchanged INCONCLUSIVE gate, without a larger model, additional roots or relaxed thresholds.
+
+A subsequent CPU-only diagnostic exposed a limitation in the pilot sequence screen: shorter sequences were omitted. T then R2 preserves all three correct accepts while reducing incorrect accepts from three to one; its loss remains above always defer. This exploratory result does not change the gate, but supports investigating combined verification rather than treating the pilot as a refutation of the overall idea. [Details and limits](m2.md).
