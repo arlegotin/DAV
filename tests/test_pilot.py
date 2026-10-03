@@ -1,4 +1,5 @@
 from depverify.pilot import screen, screening_policies
+import pytest
 
 
 def row(i,label,verdicts=None,status='ok',root=None):
@@ -82,3 +83,55 @@ def test_unresolved_eager_panel_blocks_full_pilot_go(tmp_path,monkeypatch,actor_
     result=p.evaluate_pilot(root,Path('config.toml'))
     assert read_json(root/'analysis.json')['eager_system']['labels_block_stage']
     assert result['status']=='BLOCKED'
+
+
+def test_paired_difference_matches_episode_identity_not_input_order():
+    from depverify.pilot import grouped_difference
+    rows=[{'episode_id':str(i),'proposal_key':str(i),'root_group_id':str(i),
+           'label_status':'resolved','loss':loss} for i,loss in enumerate((0.,100.))]
+    result=grouped_difference(rows,list(reversed(rows)))
+    assert result['mean']==0. and result['interval_95']==[0.,0.]
+
+
+@pytest.mark.parametrize('defect',['missing','duplicate','root','proposal'])
+def test_paired_difference_rejects_unmatched_or_conflicting_bindings(defect):
+    from depverify.pilot import grouped_difference
+    rows=[{'episode_id':str(i),'proposal_key':str(i),'root_group_id':str(i),
+           'label_status':'resolved','loss':float(i)} for i in range(2)]
+    baseline=[dict(r) for r in rows]
+    if defect=='missing':baseline.pop()
+    elif defect=='duplicate':baseline[1]=dict(baseline[0])
+    elif defect=='root':baseline[0]['root_group_id']='different'
+    else:baseline[0]['proposal_key']='different'
+    with pytest.raises(ValueError,match='paired'):
+        grouped_difference(rows,baseline)
+
+
+def test_universally_rejecting_review_is_not_complementary_evidence():
+    rows=[row(i,int(i<12),{'T':'PASS' if i%2 else 'FAIL','R1':'FAIL','R2':'PASS','D':'PASS'},root=str(i%3))
+          for i in range(12,24)]
+    rows=[row(i,1,{'T':'PASS','R1':'FAIL','R2':'PASS','D':'PASS'},root=str(i%3)) for i in range(12)]+rows
+    policies={'test_only':{'mean_loss':8.},'sequence_T_R1':{'mean_loss':6.}}
+    result=screen(rows,policies,next_budget_feasible=True)
+    assert not result['criteria']['complementary_checks_three_roots']
+    assert not result['criteria']['public_test_headroom']
+
+
+def test_first_action_bound_does_not_claim_headroom_with_free_later_truth():
+    from depverify.pilot import first_action_bound
+    rows=[row(0,1,root='a')|{'lineage':'same_lineage','costs':{'T':6.}},
+          row(1,0,root='b')|{'lineage':'same_lineage','costs':{'T':6.}}]
+    result=first_action_bound(rows,unit_seconds=1.)
+    assert result['max_terminal_saving_units']==2.5
+    assert result['cheapest_first_action_units']==6.
+    assert result['acquisition_loss_lower_bound_vs_defer']==3.5
+    assert result['acquisition_can_beat_defer'] is False
+
+
+def test_prospective_screen_includes_short_sequences_and_requires_audited_evidence():
+    policies=screening_policies(include_subsets=True)
+    assert len(policies)==68
+    assert policies['sequence_T_R2'][0]('same_lineage',frozenset(('T','R2')),(None,None,'PASS',None))[0]=='R2'
+    rows=[row(i,1) for i in range(12)]+[row(i,0,{'T':'PASS','R1':'FAIL','R2':'PASS','D':'PASS'}) for i in range(12,24)]
+    result=screen(rows,{},next_budget_feasible=True,corrective_ids=set())
+    assert not result['criteria']['public_test_headroom']

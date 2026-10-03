@@ -79,3 +79,13 @@ def test_duplicate_episodes_and_public_label_contradictions_block_analysis(actor
         evaluation().score_decision(proposal, public_fail, 1, unit_seconds=2.)
     with pytest.raises(ValueError):
         evaluation().score_decision(replace(proposal, status="syntax_error"), replace(public_fail, history=()), 1, unit_seconds=2.)
+
+
+def test_acceptance_rates_weight_roots_equally_with_unequal_variants(actor_metadata):
+    rows=[score_row(actor_metadata,'a','one','ACCEPT',1,2.)]
+    rows += [score_row(actor_metadata,f'b{i}','two','ACCEPT',0,2.) for i in range(3)]
+    result=evaluation().summarize(rows)
+    assert result['correct_accepts_per_attempt']==.5
+    assert result['incorrect_accepts_per_attempt']==.5
+    assert result['incorrect_among_accepted']==.5
+    assert result['raw_correct_accepts_per_attempt']==.25

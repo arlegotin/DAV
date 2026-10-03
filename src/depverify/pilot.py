@@ -15,7 +15,7 @@ from .records import (CHECK_IDS, EMPTY_HISTORY, CheckResult, GateResult, Proposa
 from .smoke import forecast_stage
 
 
-def screening_policies():
+def screening_policies(*,include_subsets=False):
     """Fixed PASS-only rules, selected on pilot only; not M3 learned baselines."""
     policies={}
     for action in ('ACCEPT','DEFER'):
@@ -31,13 +31,14 @@ def screening_policies():
         return choose
     policies['test_only']=(sequence(('T',)),{'kind':'pass_only','order':['T']})
     for check in CHECK_IDS:policies['single_'+check]=(sequence((check,)),{'kind':'pass_only','order':[check]})
-    for order in itertools.permutations(CHECK_IDS):
-        policies['sequence_'+'_'.join(order)]=(sequence(order),{'kind':'pass_only','order':list(order),'early_stop':'non-PASS'})
+    for length in (range(2,5) if include_subsets else (4,)):
+        for order in itertools.permutations(CHECK_IDS,length):
+            policies['sequence_'+'_'.join(order)]=(sequence(order),{'kind':'pass_only','order':list(order),'early_stop':'non-PASS'})
     policies['all_checks_diagnostic']=(sequence(CHECK_IDS,early=False),{'kind':'diagnostic','order':list(CHECK_IDS),'early_stop':'public_FAIL_veto_only'})
     return policies
 
 
-def screen(rows,policies,*,next_budget_feasible,integrity_passed=True,eager_dominates=False):
+def screen(rows,policies,*,next_budget_feasible,integrity_passed=True,eager_dominates=False,corrective_ids=None):
     n=len(rows)
     correct=sum(r['label']==1 for r in rows);wrong=sum(r['label']==0 for r in rows)
     unresolved=n-correct-wrong
@@ -46,17 +47,23 @@ def screen(rows,policies,*,next_budget_feasible,integrity_passed=True,eager_domi
     contradictions=[r['episode_id'] for r in rows if r['label']==1 and
                     (r['proposal_status']!='ok' or r['verdicts'].get('T')=='FAIL')]
     caught={c:{r['episode_id'] for r in valid_bad if r['verdicts'].get(c)=='FAIL'} for c in CHECK_IDS}
+    valid_good=[r for r in rows if r['label']==1 and r['proposal_status']=='ok']
+    useful={c for c in CHECK_IDS if valid_good and valid_bad and
+            any(r['verdicts'].get(c)=='PASS' for r in valid_good) and
+            len(caught[c])/len(valid_bad)>sum(r['verdicts'].get(c)=='FAIL' for r in valid_good)/len(valid_good)}
     by_id={r['episode_id']:r for r in rows}
     complementary=set()
     pairs=[]
     for a,b in itertools.combinations(CHECK_IDS,2):
+        if a not in useful or b not in useful:continue
         different=caught[a]^caught[b]
         if caught[a] and caught[b] and different:
             roots={by_id[i]['root_group_id'] for i in different}
             complementary.update(roots)
             pairs.append({'checks':[a,b],'different_error_ids':sorted(different),'root_groups':sorted(roots)})
     public_headroom=[r['episode_id'] for r in valid_bad if r['verdicts'].get('T')=='PASS' and
-                     any(r['verdicts'].get(c)=='FAIL' for c in ('R1','R2','D'))]
+                     any(r['verdicts'].get(c)=='FAIL' for c in useful-{'T'}) and
+                     (corrective_ids is None or r['episode_id'] in corrective_ids)]
     simple=[v for name,v in policies.items() if name in ('always_accept','always_defer','test_only') or name.startswith('single_')]
     useful_sequences=[]
     for name,result in policies.items():
@@ -79,6 +86,7 @@ def screen(rows,policies,*,next_budget_feasible,integrity_passed=True,eager_domi
             'unresolved':unresolved,'invalid':invalid,'valid_incorrect':len(valid_bad)},
             'caught_error_ids':{c:sorted(ids) for c,ids in caught.items()},'complementary_root_groups':sorted(complementary),
             'complementary_pairs':pairs,'public_pass_corrective_ids':public_headroom,'useful_sequences':useful_sequences,
+            'useful_check_types':sorted(useful),
             'label_contradictions':contradictions,
             'reasons':[name for name,passed in criteria.items() if not passed]}
 
@@ -98,8 +106,17 @@ def _load(run_dir,system,ids):
 
 
 def grouped_difference(rows,baseline):
+    def index(values):
+        indexed={r['episode_id']:r for r in values}
+        if len(indexed)!=len(values):raise ValueError('duplicate paired episode identity')
+        return indexed
+    left,right=index(rows),index(baseline)
+    if left.keys()!=right.keys():raise ValueError('paired episode membership differs')
     groups=defaultdict(list)
-    for row,base in zip(rows,baseline):
+    for episode in sorted(left):
+        row,base=left[episode],right[episode]
+        if any(row.get(k)!=base.get(k) for k in ('root_group_id','proposal_key','label_status','label')):
+            raise ValueError('paired episode bindings differ')
         if row['label_status']=='resolved' and base['label_status']=='resolved':
             groups[row['root_group_id']].append(row['loss']-base['loss'])
     if not groups:return None
@@ -109,12 +126,40 @@ def grouped_difference(rows,baseline):
             'root_groups':len(groups),'resamples':10000,'seed':7305,'role':'exploratory pilot comparison only'}
 
 
+def first_action_bound(rows,*,unit_seconds,defer=5.):
+    """Optimistic diagnostic: buying any first check then receiving free perfect truth.
+
+    Valid only for identical observable initial metadata and common available actions.
+    Costs are charged as observed; labels are used only by this host-side diagnostic.
+    """
+    if unit_seconds<=0:raise ValueError('positive cost unit required')
+    valid=[r for r in rows if r['proposal_status']=='ok']
+    if not valid or any(r['label'] not in (0,1) for r in rows):
+        return {'available':False,'reason':'unresolved labels or no valid proposals'}
+    metadata={(r['lineage'],tuple(sorted(r['costs']))) for r in valid}
+    if len(metadata)!=1:return {'available':False,'reason':'initial metadata differs'}
+    groups=defaultdict(list)
+    for r in rows:groups[r['root_group_id']].append(r)
+    actions=sorted(valid[0]['costs'])
+    if not actions:return {'available':False,'reason':'no available checks'}
+    def average(fn):return float(np.mean([np.mean([fn(r) for r in group]) for group in groups.values()]))
+    saving=average(lambda r:defer*int(r['label']==1 and r['proposal_status']=='ok'))
+    costs={c:average(lambda r:r['costs'][c]/unit_seconds if r['proposal_status']=='ok' else 0.) for c in actions}
+    cheapest=min(costs.values());bound=cheapest-saving
+    return {'available':True,'max_terminal_saving_units':saving,'first_action_units':costs,
+            'cheapest_first_action_units':cheapest,'acquisition_loss_lower_bound_vs_defer':bound,
+            'acquisition_can_beat_defer':bound<0,
+            'scope':'Optimistic same-metadata bound on this sample; not a deployable oracle or population guarantee.'}
+
+
 def evaluate_pilot(run_dir,config_path):
     run_dir=Path(run_dir)
     manifest=read_json(run_dir/'frozen-pilot.json')
     ids=sorted(manifest['task_hashes'])
     natural=_load(run_dir,'natural',ids)
     eager=_load(run_dir,'eager',manifest['eager_task_ids'])
+    prospective=manifest.get('screen_version',1)>=2
+    definitions=screening_policies(include_subsets=prospective)
     contradictory=[e['episode_id'] for e,p,checks,label in natural if label['label']==1 and
                    (p.status!='ok' or ('T' in checks and checks['T'].verdict=='FAIL'))]
     if contradictory:
@@ -129,7 +174,7 @@ def evaluate_pilot(run_dir,config_path):
     unit=median(r1)
     if unit<=0:raise ValueError('pilot R1 cost unit must be positive')
     policies={};scored={};decision_records={}
-    for name,(callback,definition) in screening_policies().items():
+    for name,(callback,definition) in definitions.items():
         policy_hash=sha256_bytes(canonical_json(definition))
         policy_rows=[];decisions=[]
         for evidence,proposal,checks,label in natural:
@@ -164,7 +209,9 @@ def evaluate_pilot(run_dir,config_path):
     audit_ok=bool(audit and audit.get('data_integrity') is True and audit.get('corrective_evidence_inspected') is True)
     screening=screen(inputs,policies,next_budget_feasible=next_budget,
                      integrity_passed=not audit or audit.get('data_integrity') is True,
-                     eager_dominates=bool(audit and audit.get('eager_obviously_sufficient')))
+                     eager_dominates=bool(audit and audit.get('eager_obviously_sufficient')),
+                     corrective_ids=set(audit.get('corrective_episode_ids',[])) if prospective and audit else
+                         (set() if prospective else None))
     if not audit_ok:
         screening['criteria']['trace_audit']=False
         screening['reasons'].append('fixed trace audit pending')
