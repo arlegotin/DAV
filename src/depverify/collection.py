@@ -211,14 +211,20 @@ def _execute(path, runner, task, replacement, inputs):
 
 
 def _ensure_cleanup_records(run_dir, *, ledger=None):
+    directories=('container-calls','episodes','private/invocations',
+                 'runner-fixtures','pilot-admission','replacement-admission')
     ledger = Path(ledger) if ledger is not None else Path(run_dir).parent/'work-budget.jsonl'
-    if ledger.exists():
-        pending = [key for key, attempt in resume_attempts(ledger)['attempts'].items()
+    ledgers={ledger}
+    for directory in directories:
+        ledgers.update((Path(run_dir)/directory).rglob('budget.jsonl'))
+    for budget in sorted(ledgers):
+        if not budget.exists():continue
+        pending = [key for key, attempt in resume_attempts(budget)['attempts'].items()
                    if attempt['work_kind']=='execution' and attempt['status']=='pending']
         if pending:
             raise CollectionStop('pending execution requires confirmed cleanup and accounting: '+', '.join(pending))
     # Include cached/recovered raw invocations, even when the saved T record is skipped.
-    for directory in ('container-calls','episodes','private/invocations'):
+    for directory in directories:
         for path in (Path(run_dir)/directory).rglob('*.json'):
             record=read_json(path)
             result=record.get('result',record)

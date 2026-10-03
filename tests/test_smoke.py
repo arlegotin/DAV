@@ -83,3 +83,46 @@ def test_critical_pressure_prevents_m1_loading(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError,match='memory envelope'):
         s._smoke_local(run,Path('config.toml'))
     assert loads==[]
+
+
+def _cleanup_smoke_setup(tmp_path, monkeypatch):
+    import depverify.smoke as s
+    from depverify.records import write_json_atomic
+    run=tmp_path/'m1'
+    write_json_atomic(run/'model-identity.json', {'path':'unused'})
+    write_json_atomic(run/'runner-environment.json', {'engine_memory_bytes':1024**3,
+        'virtual_disk_probe':{'status':'ok','outputs':[{'vm_free_bytes':2*1024**3}]}})
+    write_json_atomic(run/'pilot-admission/results.json', {'passed':True})
+    xml=run/'runner-fixtures/results.xml';xml.parent.mkdir();xml.write_text('<testsuites/>')
+    monkeypatch.setattr(s,'require_gate',lambda *args,**kwargs:None)
+    monkeypatch.setattr(s,'validate_prerequisites',lambda *args:None)
+    monkeypatch.setattr(s,'doctor_local',lambda *args:{'passed':True,'ram_bytes':36*1024**3})
+    monkeypatch.setattr(s,'LocalModel',lambda *args,**kwargs:pytest.fail('model constructed before cleanup validation'))
+    return s,run
+
+
+@pytest.mark.parametrize('ledger_path', ['../work-budget.jsonl',
+    'runner-fixtures/attempt/invocations/budget.jsonl',
+    'pilot-admission/invocations/budget.jsonl',
+    'replacement-admission/invocations/budget.jsonl'])
+def test_smoke_pending_execution_without_raw_record_blocks_model(tmp_path, monkeypatch, ledger_path):
+    from depverify.pipeline import reserve
+    s,run=_cleanup_smoke_setup(tmp_path,monkeypatch)
+    reserve(run/ledger_path,attempt_id='container-crash-before-result',stage='M1',work_kind='execution',
+        allowance_seconds=10.,limits=s._limits(s.load_config(Path('config.toml'))))
+    with pytest.raises(RuntimeError,match='pending.*execution'):
+        s._smoke_local(run,Path('config.toml'))
+    assert not (run/'smoke').exists()
+
+
+@pytest.mark.parametrize('raw_path', ['runner-fixtures/old-invocation.json',
+    'runner-fixtures/attempt/invocations/failed.json',
+    'pilot-admission/invocations/failed.json',
+    'replacement-admission/invocations/failed.json'])
+def test_smoke_retained_failed_cleanup_blocks_model(tmp_path, monkeypatch, raw_path):
+    from depverify.records import write_json_atomic
+    s,run=_cleanup_smoke_setup(tmp_path,monkeypatch)
+    write_json_atomic(run/raw_path,{'result':{'cleanup_ok':False,'status':'infrastructure_error'}})
+    with pytest.raises(RuntimeError,match='unconfirmed.*cleanup'):
+        s._smoke_local(run,Path('config.toml'))
+    assert not (run/'smoke').exists()

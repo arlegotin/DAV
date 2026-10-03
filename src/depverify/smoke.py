@@ -215,6 +215,8 @@ def _smoke_local(run_dir, config_path):
     run_dir, config_path = Path(run_dir), Path(config_path)
     hashes = implementation_hashes(config_path)
     require_gate(run_dir.parent/'m0/gate.json', stage='M0', expected_hashes=hashes)
+    from .collection import _ensure_cleanup_records
+    _ensure_cleanup_records(run_dir)
     config = load_config(config_path)
     profile = doctor_local(run_dir, config_path)
     if not profile['passed']:
