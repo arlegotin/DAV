@@ -177,6 +177,11 @@ def settle(ledger_path: Path, *, reservation_id: str, actual_seconds: float, sta
                             "actual_seconds": actual, "status": status})
 
 
+def read_budget_snapshot(ledger_path: Path) -> dict:
+    """Validate a saved ledger without locking, repairing, or changing any file."""
+    return _state(read_events(Path(ledger_path)))
+
+
 def resume_attempts(ledger_path: Path) -> dict:
     path = Path(ledger_path)
     with _lock(path):

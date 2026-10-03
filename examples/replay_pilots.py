@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import sys
 
+from depverify.collection import CollectionStop
 from depverify.evaluate import replay_episode,score_decision,summarize
 from depverify.pilot import _load,grouped_difference,screening_policies
 from depverify.records import Decision,canonical_json,from_dict,read_json,sha256_bytes
@@ -31,8 +32,8 @@ def replay_panel(root,panel):
     directory=panel['directory']
     if Path(directory).name!=directory:raise ValueError('invalid panel path')
     run=Path(root)/directory
-    natural=_load(run,'natural',panel['natural_ids'])
-    eager=_load(run,'eager',panel['eager_ids'])
+    natural=_load(run,'natural',panel['natural_ids'],read_only=True)
+    eager=_load(run,'eager',panel['eager_ids'],read_only=True)
     saved_decisions=read_json(run/'replay-decisions.json')
     saved_scores=read_json(run/'replay-scores.json')
     definitions=screening_policies(include_subsets=panel['include_subsets'])
@@ -103,9 +104,9 @@ def main(argv=None):
                     row=panel['policies'][policy]
                     print(f"{policy:23} {row['correct_accepts']:7} {row['incorrect_accepts']:6} {row['deferrals']:6} {row['mean_loss']:11.3f}")
                 print(f"Verified every trajectory and saved score for {panel['verified_policies']} policies.")
-            print('\nNo model calls, candidate executions or writes. Pilot results do not authorize a new stage.')
+            print('\nNo model calls, candidate executions or artifact changes. Pilot results do not authorize a new stage.')
         return 0
-    except (OSError,ValueError,KeyError,TypeError) as exc:
+    except (OSError,ValueError,KeyError,TypeError,CollectionStop) as exc:
         print('public replay: '+str(exc),file=sys.stderr)
         return 1
 

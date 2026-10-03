@@ -9,7 +9,7 @@ import time
 
 from .checks import parse_review
 from .local_model import LocalModel, assemble_messages
-from .pipeline import (REPO_ROOT, BudgetStop, implementation_hashes, load_config, record_revision,
+from .pipeline import (REPO_ROOT, BudgetStop, implementation_hashes, load_config, read_budget_snapshot, record_revision,
                        require_gate, resume_attempts, settle)
 from .records import (CHECK_IDS, CheckResult, GateResult, Proposal, canonical_json, from_dict,
                       parse_json, proposal_key, read_json, sha256_bytes, to_dict, write_json_atomic)
@@ -210,16 +210,17 @@ def _execute(path, runner, task, replacement, inputs):
     return result
 
 
-def _ensure_cleanup_records(run_dir, *, ledger=None):
+def _ensure_cleanup_records(run_dir, *, ledger=None, read_only=False):
     directories=('container-calls','episodes','private/invocations',
                  'runner-fixtures','pilot-admission','replacement-admission')
     ledger = Path(ledger) if ledger is not None else Path(run_dir).parent/'work-budget.jsonl'
     ledgers={ledger}
     for directory in directories:
         ledgers.update((Path(run_dir)/directory).rglob('budget.jsonl'))
+    read_budget = read_budget_snapshot if read_only else resume_attempts
     for budget in sorted(ledgers):
         if not budget.exists():continue
-        pending = [key for key, attempt in resume_attempts(budget)['attempts'].items()
+        pending = [key for key, attempt in read_budget(budget)['attempts'].items()
                    if attempt['work_kind']=='execution' and attempt['status']=='pending']
         if pending:
             raise CollectionStop('pending execution requires confirmed cleanup and accounting: '+', '.join(pending))

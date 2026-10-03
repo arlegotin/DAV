@@ -91,9 +91,9 @@ def screen(rows,policies,*,next_budget_feasible,integrity_passed=True,eager_domi
             'reasons':[name for name,passed in criteria.items() if not passed]}
 
 
-def _load(run_dir,system,ids):
+def _load(run_dir,system,ids,*,read_only=False):
     from .collection import _ensure_cleanup_records, validated_episode
-    _ensure_cleanup_records(run_dir)
+    _ensure_cleanup_records(run_dir,read_only=read_only)
     rows=[]
     for episode_id in ids:
         folder=run_dir/'episodes'/system/episode_id
