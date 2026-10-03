@@ -200,3 +200,26 @@ def test_resume_guard_amendment_is_bound_and_cannot_change_evidence_inputs(tmp_p
     assert resume_freeze(path,current)==original and path.read_bytes()==before
     changed=current|{'schedule':{'seed':2}}
     with pytest.raises(ValueError,match='inputs'):resume_freeze(path,changed)
+
+
+def test_pending_container_reservation_blocks_before_more_work(tmp_path):
+    from depverify.collection import _ensure_cleanup_records, CollectionStop
+    from depverify.pipeline import reserve
+    ledger = tmp_path/'work-budget.jsonl'
+    limits={'total_seconds':{'model':43200.},'stage_seconds':{'M2':{'model':3600.}},
+            'per_call_seconds':{'model':180.,'execution':10.}}
+    reserve(ledger, attempt_id='container-crash-no-result', stage='M2',
+            work_kind='execution', allowance_seconds=10., limits=limits)
+    with pytest.raises(CollectionStop, match='pending.*execution'):
+        _ensure_cleanup_records(tmp_path/'m2', ledger=ledger)
+
+
+@pytest.mark.parametrize('completion', [{}, {'record_hashes':{}},
+    {'record_hashes':{'../../outside.json':'a'*64}}])
+def test_empty_or_out_of_scope_completion_cannot_skip_validation(tmp_path, completion):
+    task=load_pilot()[0]
+    folder=tmp_path/'episodes/natural'/task.episode_id
+    write_json_atomic(folder/'complete.json', completion)
+    write_json_atomic(folder/'evidence.json', {'unvalidated':True})
+    with pytest.raises(ValueError, match='complet'):
+        collect_episode(task,'natural',tmp_path,None,None,{},schedule([task])[task.episode_id])

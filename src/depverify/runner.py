@@ -185,7 +185,12 @@ class ContainerRunner:
                     "--mount", f"type=bind,src={staging},dst=/work,readonly", "--workdir", "/work", "--interactive",
                     self.image, "python", "-I", "-B", "/work/_depverify_driver.py"]
             created = True  # Track the name even if create dies before returning a CID.
-            creation = _capture(argv, deadline=deadline - 2., limit=self.output_limit)
+            try:
+                creation = _capture(argv, deadline=deadline - 2., limit=self.output_limit)
+            except FileNotFoundError:
+                # Popen never launched the create command; no container can exist.
+                created = False
+                raise
             if creation["stream_status"] != "complete" or creation["exit_code"] != 0:
                 result.update({k: creation[k] for k in ("stdout", "stderr", "exit_code", "captured_bytes")})
             else:
@@ -232,7 +237,7 @@ class ContainerRunner:
                     cleanup_ok = (removal["stream_status"] == "complete" and inspection["stream_status"] == "complete"
                                   and inspection["exit_code"] == 0 and not inspection["stdout"].strip())
                 except OSError:
-                    cleanup_ok = shutil.which(self.engine) is None
+                    cleanup_ok = False
             result.update(container_id=cid, cleanup_ok=cleanup_ok, elapsed_seconds=time.monotonic() - started)
             if not cleanup_ok:
                 self._blocked = True

@@ -72,6 +72,19 @@ def test_engine_disconnect_does_not_certify_cleanup(tmp_path):
         runner.run(FILES, "solve", [1])
 
 
+def test_engine_disappearing_after_creation_retains_staging_and_blocks(tmp_path):
+    engine = Path(fake_engine(tmp_path))
+    engine.write_text(engine.read_text().replace('request=json.load(sys.stdin)',
+                      'from pathlib import Path\n    Path(sys.argv[0]).unlink()\n    request=json.load(sys.stdin)'))
+    runner = runner_type()(IMAGE, engine=str(engine))
+    result = runner.run(FILES, "solve", [1])
+    assert result['cleanup_ok'] is False
+    assert result['status'] == 'infrastructure_error'
+    assert Path(result['retained_staging_path']).exists()
+    with pytest.raises(RuntimeError, match='cleanup'):
+        runner.run(FILES, "solve", [1])
+
+
 def test_engine_start_failure_is_not_a_candidate_failure(tmp_path):
     engine = Path(fake_engine(tmp_path))
     engine.write_text(engine.read_text().replace('request=json.load(sys.stdin)',

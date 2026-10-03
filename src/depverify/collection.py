@@ -187,7 +187,13 @@ def _execute(path, runner, task, replacement, inputs):
     return result
 
 
-def _ensure_cleanup_records(run_dir):
+def _ensure_cleanup_records(run_dir, *, ledger=None):
+    ledger = Path(ledger) if ledger is not None else Path(run_dir).parent/'work-budget.jsonl'
+    if ledger.exists():
+        pending = [key for key, attempt in resume_attempts(ledger)['attempts'].items()
+                   if attempt['work_kind']=='execution' and attempt['status']=='pending']
+        if pending:
+            raise CollectionStop('pending execution requires confirmed cleanup and accounting: '+', '.join(pending))
     # Include cached/recovered raw invocations, even when the saved T record is skipped.
     for directory in ('container-calls','episodes','private/invocations'):
         for path in (Path(run_dir)/directory).rglob('*.json'):
@@ -195,6 +201,43 @@ def _ensure_cleanup_records(run_dir):
             result=record.get('result',record)
             if isinstance(result,dict) and result.get('cleanup_ok') is False:
                 raise CollectionStop('unconfirmed container cleanup in retained invocation: '+str(path))
+
+
+def validated_episode(run_dir, system, episode_id):
+    """Validate the exact completed bundle, including duplicated evidence bindings."""
+    run_dir=Path(run_dir)
+    if system not in ('natural','eager') or not episode_id or Path(episode_id).name!=episode_id:
+        raise ValueError('invalid completed episode identity')
+    folder=run_dir/'episodes'/system/episode_id
+    complete=read_json(folder/'complete.json')
+    hashes=complete.get('record_hashes')
+    core=[folder/'proposal.json',folder/'evidence.json',run_dir/'private/labels'/system/(episode_id+'.json')]
+    core_names={p.relative_to(run_dir).as_posix() for p in core}
+    if not isinstance(hashes,dict) or not core_names.issubset(hashes):
+        raise ValueError('incomplete completion record bindings')
+    for name,digest in hashes.items():
+        if (not isinstance(name,str) or name not in core_names|{(folder/(c+'.json')).relative_to(run_dir).as_posix() for c in CHECK_IDS}
+                or not isinstance(digest,str) or len(digest)!=64):
+            raise ValueError('out-of-scope completion record binding')
+        path=run_dir/name
+        if not path.resolve().is_relative_to(run_dir.resolve()) or sha256_bytes(path.read_bytes())!=digest:
+            raise ValueError('completed episode record changed')
+    proposal=from_dict(Proposal,read_json(core[0]))
+    evidence=read_json(core[1]); label=read_json(core[2])
+    expected_checks=set(CHECK_IDS if system=='natural' else ('T',)) if proposal.status=='ok' else set()
+    expected_names=core_names|{(folder/(c+'.json')).relative_to(run_dir).as_posix() for c in expected_checks}
+    if set(hashes)!=expected_names or set(evidence.get('checks',{}))!=expected_checks:
+        raise ValueError('incomplete completion check bindings')
+    if (proposal.episode_id!=episode_id or evidence.get('episode_id')!=episode_id or
+            evidence.get('system')!=system or label.get('episode_id')!=episode_id or
+            canonical_json(evidence.get('proposal'))!=canonical_json(to_dict(proposal))):
+        raise ValueError('completed episode identity changed')
+    for c in expected_checks:
+        check=from_dict(CheckResult,read_json(folder/(c+'.json')))
+        if (check.proposal_key!=proposal.proposal_key or check.check_id!=c or
+                canonical_json(evidence['checks'][c])!=canonical_json(to_dict(check))):
+            raise ValueError('completed episode evidence changed')
+    return evidence
 
 
 def _public_check(folder, runner, task, proposal):
@@ -247,11 +290,7 @@ def collect_episode(task, system, run_dir, model, runner, manifest, row, *, guar
     folder = run_dir/'episodes'/system/task.episode_id
     complete = folder/'complete.json'
     if complete.exists():
-        saved = read_json(complete)
-        for name,digest in saved['record_hashes'].items():
-            if sha256_bytes((run_dir/name).read_bytes()) != digest:
-                raise ValueError('completed episode record changed')
-        return read_json(folder/'evidence.json')
+        return validated_episode(run_dir,system,task.episode_id)
     messages = actor_messages(task,system)
     seed = row['seeds']['actor' if system=='natural' else 'eager']
     actor = _model_call(folder/'actor-call.json',model,messages,'proposal',seed)
@@ -326,6 +365,11 @@ def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot'
     config=load_config(config_path)
     tasks=load_pilot();rows=schedule(tasks);eager=eager_ids(tasks)
     ledger=run_dir.parent/'work-budget.jsonl'
+    _ensure_cleanup_records(run_dir,ledger=ledger)
+    for system,selected in [('natural',tasks),('eager',[t for t in tasks if t.episode_id in eager])]:
+        for task in selected:
+            if (run_dir/'episodes'/system/task.episode_id/'complete.json').exists():
+                validated_episode(run_dir,system,task.episode_id)
     remaining,state=_remaining(ledger)
     pending_natural=[t for t in tasks if not (run_dir/'episodes/natural'/t.episode_id/'complete.json').exists()]
     pending_eager=[t for t in tasks if t.episode_id in eager and not (run_dir/'episodes/eager'/t.episode_id/'complete.json').exists()]

@@ -51,3 +51,35 @@ def test_measured_worker_rss_counts_even_when_mlx_allocation_is_smaller():
     _,_,check=api()
     samples=[{'elapsed_seconds':0,'swap_used_bytes':0,'pressure_level':1,'worker_rss_bytes':20*1024**3}]
     assert not check(samples,36*1024**3,5*1024**3,8*1024**3)['passed']
+
+
+def test_critical_pressure_prevents_m1_loading(tmp_path, monkeypatch):
+    import time
+    import depverify.smoke as s
+    from depverify.records import write_json_atomic
+    run=tmp_path/'m1'
+    write_json_atomic(run/'model-identity.json', {'path':'unused'})
+    write_json_atomic(run/'runner-environment.json', {'engine_memory_bytes':1024**3,
+        'virtual_disk_probe':{'status':'ok','outputs':[{'vm_free_bytes':2*1024**3}]}})
+    write_json_atomic(run/'pilot-admission/results.json', {'passed':True})
+    xml=run/'runner-fixtures/results.xml';xml.parent.mkdir();xml.write_text('<testsuites/>')
+    monkeypatch.setattr(s,'require_gate',lambda *args,**kwargs:None)
+    monkeypatch.setattr(s,'validate_prerequisites',lambda *args:None)
+    monkeypatch.setattr(s,'doctor_local',lambda *args:{'passed':True,'ram_bytes':36*1024**3})
+    loads=[]
+    class Model:
+        def __init__(self,*args,**kwargs):pass
+        def start(self):
+            loads.append(1)
+            raise RuntimeError('load happened before guard')
+        def close(self):pass
+    class Monitor:
+        def __init__(self,*args):
+            self.samples=[{'pressure_level':4,'swap_used_bytes':0,'worker_rss_bytes':0,'elapsed_seconds':0.}]
+            self.errors=[];self.started=time.monotonic()
+        def start(self):pass
+        def close(self):pass
+    monkeypatch.setattr(s,'LocalModel',Model);monkeypatch.setattr(s,'MemoryMonitor',Monitor)
+    with pytest.raises(RuntimeError,match='memory envelope'):
+        s._smoke_local(run,Path('config.toml'))
+    assert loads==[]

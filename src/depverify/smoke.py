@@ -214,28 +214,38 @@ def _smoke_local(run_dir, config_path):
     model = LocalModel(Path(identity['path']), identity, ledger, _limits(config), 'M1', record_dir=folder/'model-calls')
     monitor = MemoryMonitor(model)
     calls, proposals, reviews, repeats = [], [], [], []
+    def guard():
+        peak=max((c.get('peak_memory_bytes',0) for c in calls),default=0)
+        if monitor.errors or not memory_check(monitor.samples,profile['ram_bytes'],peak,
+                                              environment['engine_memory_bytes'])['passed']:
+            raise RuntimeError('memory envelope failed; stop expansion')
+    def generate(*args,**kwargs):
+        guard()
+        result=model.generate(*args,**kwargs)
+        calls.append(result)
+        guard()
+        return result
     try:
         monitor.start()
+        guard()
         startup = model.start()
-        calls.append(model.generate(assemble_messages(tasks[ids[0]], 'proposal'), role='proposal', seed=1099, temperature=.2))
+        guard()
+        generate(assemble_messages(tasks[ids[0]], 'proposal'), role='proposal', seed=1099, temperature=.2)
         for index, task_id in enumerate(ids):
             task = tasks[task_id]
-            actor = model.generate(assemble_messages(task, 'proposal'), role='proposal', seed=1100+index, temperature=.2)
-            calls.append(actor)
+            actor = generate(assemble_messages(task, 'proposal'), role='proposal', seed=1100+index, temperature=.2)
             root = materialize(task, folder/'disposable')
             status, preflight_seconds = preflight(task, actor['text'], root)
             proposals.append({'episode_id':task_id,'preflight_status':status, 'preflight_seconds':preflight_seconds,'output':actor})
             first = None
             for role_index, role in enumerate(('R1','R2','D')):
                 seed = manifest['review_seeds'][role_index]+index
-                output = model.generate(assemble_messages(task, role, actor['text']), role=role, seed=seed, temperature=0)
-                calls.append(output)
+                output = generate(assemble_messages(task, role, actor['text']), role=role, seed=seed, temperature=0)
                 verdict, parse_status, reason = parse_review(output['text'], truncated=output['status']=='truncated')
                 reviews.append({'episode_id':task_id,'check_id':role,'verdict':verdict,'status':parse_status,'reason':reason,'output':output})
                 if role == 'R1':
                     first = reviews[-1]
-            repeated = model.generate(assemble_messages(task,'R1',actor['text']),role='R1',seed=2100+index,temperature=0)
-            calls.append(repeated)
+            repeated = generate(assemble_messages(task,'R1',actor['text']),role='R1',seed=2100+index,temperature=0)
             verdict, status, reason = parse_review(repeated['text'],truncated=repeated['status']=='truncated')
             reviews.append({'episode_id':task_id,'check_id':'R1-repeat','verdict':verdict,'status':status,'reason':reason,'output':repeated})
             repeats.append({'episode_id':task_id,'changed_text':first['output']['text'] != repeated['text'],

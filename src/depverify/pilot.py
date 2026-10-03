@@ -84,13 +84,12 @@ def screen(rows,policies,*,next_budget_feasible,integrity_passed=True,eager_domi
 
 
 def _load(run_dir,system,ids):
+    from .collection import _ensure_cleanup_records, validated_episode
+    _ensure_cleanup_records(run_dir)
     rows=[]
     for episode_id in ids:
         folder=run_dir/'episodes'/system/episode_id
-        complete=read_json(folder/'complete.json')
-        for name,digest in complete['record_hashes'].items():
-            if sha256_bytes((run_dir/name).read_bytes())!=digest:raise ValueError('immutable episode changed')
-        evidence=read_json(folder/'evidence.json')
+        evidence=validated_episode(run_dir,system,episode_id)
         proposal=from_dict(Proposal,evidence['proposal'])
         checks={c:from_dict(CheckResult,value) for c,value in evidence['checks'].items()}
         label=read_json(run_dir/'private/labels'/system/(episode_id+'.json'))
