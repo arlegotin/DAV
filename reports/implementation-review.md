@@ -2,7 +2,7 @@
 
 Work stayed on the user-requested current `main` branch. The nine M0 tasks each have a focused commit and a passing test record. A fresh reviewer checked the whole M0 range `868090c..0e174eb` read-only and independently passed 186 tests. The three Important findings were reproduced and corrected in one TDD pass, committed as `f581536`; the resulting suite passes 197 tests. The subsequent gate verification reran dependency, fake doctor, core simulation, pytest, and whitespace checks against unchanged source/config fingerprints. No second review was commissioned.
 
-The 11 added cases cover direct and loaded overflow tables, parent-symlink and directory replacement, and failed-check status/check-ID consistency. Ten failed on the old implementation; the JSON rejection case already passed. [Red](../runs/m0/review/regressions-red.txt) and [green](../runs/m0/review/regressions-green.txt) outputs are retained. Historical gate evidence referring to skill scratch is relocated through the M0 artifact manifest; raw bytes and hashes are preserved.
+The 11 added cases cover direct and loaded overflow tables, parent-symlink and directory replacement, and failed-check status/check-ID consistency. Ten failed on the old implementation; the JSON rejection case already passed. Red (local archive: `runs/m0/review/regressions-red.txt`) and green (local archive: `runs/m0/review/regressions-green.txt`) outputs are retained. Historical gate evidence referring to skill scratch is relocated through the M0 artifact manifest; raw bytes and hashes are preserved.
 
 Rulings, in order, with their practical limits:
 

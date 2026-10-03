@@ -1,0 +1,1 @@
+{"counterexamples":[{"actual":{"q":20,"r":-40},"expected":{"q":-20,"r":0},"input":{"a":-20,"b":1}},{"actual":{"q":10,"r":-40},"expected":{"q":-10,"r":0},"input":{"a":-20,"b":2}},{"actual":{"q":4,"r":-40},"expected":{"q":-4,"r":0},"input":{"a":-20,"b":5}}],"elapsed_seconds":0.2995872087776661,"episode_id":"replacement-quotient-0","label":0,"status":"ok"}

@@ -1,0 +1,1 @@
+{"counterexamples":[{"actual":"&amp;lt;","expected":"&lt;","input":"<"},{"actual":"a&amp;lt;","expected":"a&lt;","input":"a<"},{"actual":"&amp;&amp;lt;","expected":"&amp;&lt;","input":"&<"}],"elapsed_seconds":0.2952088750898838,"episode_id":"replacement-escape-1","label":0,"status":"ok"}

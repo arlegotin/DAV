@@ -10,7 +10,7 @@ One fresh read-only reviewer checked `1b31128..0d3f3a1` and independently passed
 
 The single fix pass passes **267 ordinary tests, seven opt-in real-container tests skipped**. These are harness corrections; existing proposals, verdicts, labels, sources, seed schedule, penalties and memory thresholds were not rerun or changed.
 
-The original collection freeze remains immutable. Resume after these guard corrections requires the exact [guard amendment](../runs/m2/resume-guard-amendment.json), binding the original freeze and reviewed execution hashes. A trusted AST comparison confirms unchanged actor messages, model request construction, source lineage, seed/order generation, public-test comparison, grading inputs and container invocation arguments. Changed task/model/source/sampling inputs are refused; this is not a gate override. New workers perform a separately billed actual warmup before timings.
+The original collection freeze remains immutable. Resume after these guard corrections requires the exact guard amendment (local archive: `runs/m2/resume-guard-amendment.json`), binding the original freeze and reviewed execution hashes. A trusted AST comparison confirms unchanged actor messages, model request construction, source lineage, seed/order generation, public-test comparison, grading inputs and container invocation arguments. Changed task/model/source/sampling inputs are refused; this is not a gate override. New workers perform a separately billed actual warmup before timings.
 
 Reviewer limitations and rulings:
 

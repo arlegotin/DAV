@@ -5,12 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "depverify"
 version = "0.1.0"
-description = "A bounded local experiment in dependency-aware verification"
+description = "Dependency-aware evidence acquisition and replay for coding-agent verification"
+readme = "README.md"
+license = "MIT"
+authors = [{name = "depverify contributors"}]
 requires-python = ">=3.11"
 dependencies = ["numpy", "scipy"]
 
 [project.optional-dependencies]
 dev = ["pytest"]
+
+[project.urls]
+Repository = "https://github.com/arlegotin/DAV"
+Issues = "https://github.com/arlegotin/DAV/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

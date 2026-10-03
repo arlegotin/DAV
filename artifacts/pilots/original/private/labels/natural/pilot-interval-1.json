@@ -1,0 +1,1 @@
+{"counterexamples":[{"actual":false,"expected":true,"input":{"end":-1,"start":-2,"value":-1}},{"actual":false,"expected":true,"input":{"end":0,"start":-2,"value":0}},{"actual":false,"expected":true,"input":{"end":1,"start":-2,"value":1}}],"elapsed_seconds":0.30740362498909235,"episode_id":"pilot-interval-1","label":0,"status":"ok"}

@@ -1,0 +1,1 @@
+{"counterexamples":[{"actual":[["a",1]],"expected":[],"input":["a"]},{"actual":[["b",1]],"expected":[],"input":["b"]},{"actual":[["a",1],["b",1]],"expected":[],"input":["a","b"]}],"elapsed_seconds":0.31056400015950203,"episode_id":"replacement-runs-2","label":0,"status":"ok"}

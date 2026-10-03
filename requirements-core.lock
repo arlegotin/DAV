@@ -1,0 +1,10 @@
+# Recorded CPU/test dependencies; Python 3.12 or newer is required by these pins.
+# Native MLX dependencies remain separately recorded in requirements.lock.
+iniconfig==2.3.0
+numpy==2.5.3
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1
+scipy==1.18.1
+setuptools==84.0.0
