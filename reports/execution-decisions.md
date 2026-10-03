@@ -29,7 +29,12 @@ User-authorized work stayed on current `main`, with focused commits. Each ruling
 - Final: Ruling: reviewer did not judge M3–M5 or confirmatory statistics — leave them unexecuted — cost if wrong: no efficiency/mechanism claim can be made from this prefix.
 - Final: Ruling: reviewer did not judge live application/wrapper latency — replay wrapper cost is zero and disclosed as unmeasured — cost if wrong: actual live overhead can erase apparent savings; M5 remains necessary.
 
-## Deferred minors
+## M2 completion on 3 October
+
+- Ruling: normal memory pressure over 30 seconds and current prerequisites permit resuming the exact frozen pilot — retain all previous proposals/checks and bill a fresh load/warmup — cost if wrong: changed runtime conditions could invalidate timing; the existing monitor still checkpoints sustained pressure or slowdown.
+- Ruling: the completed pilot has only three correct proposals and no economic selection headroom — record INCONCLUSIVE and leave M3–M5 unexecuted; do not use the optional replacement pilot without a demonstrated contract/prompt defect — cost if wrong: a different preregistered task/model setting might have useful headroom, which this run does not establish.
+
+## Deferred minors (retained)
 
 - M0 fake-flow callable-name policy hashes can collide. M2 uses explicit frozen policy-definition hashes instead. The fake helper remains unchanged.
 - M1 smoke stores the preflight manifest under `preflight_seconds`; its numeric value is nested in `elapsed_seconds`. M2 uses the numeric field directly. The historical smoke presentation remains unchanged.

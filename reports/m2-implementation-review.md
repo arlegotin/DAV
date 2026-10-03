@@ -22,3 +22,5 @@ Reviewer limitations and rulings:
 Earlier deferred minors remain local to M0/M1: fake-flow policy names can collide, and smoke stores a preflight manifest under a misleading field name. M2 instead uses explicit frozen policy-definition hashes and numeric preflight latency. [Complete execution decisions](execution-decisions.md) retain rulings and their costs.
 
 The review did not invalidate the current BLOCKED/INCONCLUSIVE evidence prefix. No additional model outcome was generated to verify these fixes.
+
+This paragraph describes the historical review checkpoint. On 3 October the reviewed harness resumed with the same frozen inputs and completed the pilot under normal memory pressure. Its research gate is INCONCLUSIVE; no source code changed for that execution. Fresh verification passed 267 ordinary tests, with seven opt-in container tests skipped. [Current M2 result](m2.md).

@@ -40,3 +40,7 @@ Files: reports/m2.md, final.md, frozen artifact manifest, README/current summary
 - [ ] Write the small JSON gate and report, all screening baselines, fixed trace examples, uncertainty limits, natural versus eager distinctions, and remaining unexecuted stages.
 - [ ] If M2 isn't GO, finish the report and reproducibility checks; don't implement M3. If GO, only then write the M3 plan.
 - [ ] Run ordinary checks and one fresh read-only review of this M2 range. Fix Important/Critical findings once via RED→GREEN, preserve minors/rulings, freeze current raw artifacts and meaningful commits.
+
+### Execution record
+
+All implementation tasks and the required review/fix pass completed before the initial memory checkpoint; their ledger and test evidence are retained under `runs/m2/implementation-review/`. On 3 October the unchanged reviewed harness resumed after normal resource observations and completed all 24 natural episodes plus eight eager comparisons. The fixed audit and CPU evaluation produced **INCONCLUSIVE**: only three natural proposals were correct, below the required five, and no fixed sequence beat every simple screening policy on the declared objective. No replacement pilot or M3 work was launched. [Result and reproducibility artifacts](../../../reports/m2.md).
