@@ -71,3 +71,14 @@ def test_prefix_report_includes_recorded_blocked_prerequisites(tmp_path):
     assert "M2–M5: unexecuted" in report.stdout
     assert "Scientific status: INCONCLUSIVE" in report.stdout
     assert "M1–M6: unexecuted" not in report.stdout
+
+
+def test_report_does_not_call_a_completed_pilot_unexecuted(tmp_path):
+    from depverify.records import write_json_atomic
+    write_json_atomic(tmp_path/'runs/final.json',{'schema_version':1,'status':'NO_GO',
+        'execution_status':'COMPLETE','stopped_at':'M2','natural_episodes':48,
+        'report_path':'reports/final.md','reason':'Cheap public tests suffice in the replacement pilot.'})
+    result=run_cli(tmp_path,'report')
+    assert result.returncode==0
+    assert 'NO_GO' in result.stdout and 'M2' in result.stdout and '48' in result.stdout
+    assert 'natural benchmark unexecuted' not in result.stdout

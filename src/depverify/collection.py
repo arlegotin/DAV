@@ -385,6 +385,9 @@ def collect_episode(task, system, run_dir, model, runner, manifest, row, *, guar
 def collect_pilot(run_dir,config_path,*,resume=False,dry_run=False,split='pilot',revision=None):
     if split!='pilot':raise ValueError('only M2 pilot is implemented; later splits require their own GO gate')
     run_dir,config_path=Path(run_dir),Path(config_path)
+    expected_dir=REPO_ROOT/'runs'/('m2-replacement' if revision else 'm2')
+    if run_dir.resolve()!=expected_dir.resolve():
+        raise ValueError('collection uses its fixed run directory; another path cannot create an extra pilot')
     revision_proof=require_revision(run_dir,revision) if revision else None
     identity,environment,smoke=(require_pilot_gates(run_dir,config_path,revision=revision) if revision
                               else require_pilot_gates(run_dir,config_path))

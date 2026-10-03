@@ -135,6 +135,8 @@ def test_valid_episode_resume_and_check_inputs_do_not_leak_previous_outcomes(tmp
 
 def test_critical_baseline_stops_before_model_load(tmp_path,monkeypatch):
     import depverify.collection as c
+    monkeypatch.setattr(c,'REPO_ROOT',tmp_path)
+    (tmp_path/'prompts').symlink_to(Path('prompts').resolve(),target_is_directory=True)
     identity={'revision':'fake','tokenizer_revision':'fake','path':'fake'}
     smoke={'measurements':{'startup_seconds':1.,'prompt_seconds_per_token':.00001,'generation_seconds_per_token':.001,
                            'call_overhead_seconds':.01,'execution_seconds':.1,'timeout_rate':0.},
@@ -156,7 +158,7 @@ def test_critical_baseline_stops_before_model_load(tmp_path,monkeypatch):
         def close(self):pass
     monkeypatch.setattr(c,'LocalModel',Model);monkeypatch.setattr(c,'MemoryMonitor',Monitor)
     with pytest.raises(c.CollectionStop,match='memory'):
-        c.collect_pilot(tmp_path/'m2',Path('config.toml'))
+        c.collect_pilot(tmp_path/'runs/m2',Path('config.toml'))
     assert calls==[]
 
 
@@ -252,3 +254,11 @@ def test_replacement_cannot_be_authorized_by_a_bare_status_file(tmp_path):
     write_json_atomic(tmp_path/'m2/gate.json',{'stage':'M2','status':'INCONCLUSIVE'})
     with pytest.raises(ValueError,match='original.*gate'):
         require_revision(tmp_path/'m2-replacement','interface-v1')
+
+
+def test_alternative_directory_cannot_launch_an_extra_pilot(tmp_path,monkeypatch):
+    import depverify.collection as c
+    monkeypatch.setattr(c,'REPO_ROOT',tmp_path)
+    monkeypatch.setattr(c,'require_pilot_gates',lambda *a,**k:pytest.fail('extra collection reached native gates'))
+    with pytest.raises(ValueError,match='fixed.*directory'):
+        c.collect_pilot(tmp_path/'runs/another-pilot',Path('config.toml'))

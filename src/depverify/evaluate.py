@@ -380,6 +380,18 @@ def run_core_suite(run_dir: Path) -> dict:
 
 def render_report(run_dir: Path) -> str:
     root = Path(run_dir)
+    final_path=root.parent/'final.json'
+    if final_path.exists():
+        final=read_json(final_path)
+        if final.get('schema_version')!=1 or final.get('status') not in ('LOCAL_POC_PASS','NO_GO','INCONCLUSIVE'):
+            raise ValueError('invalid final research report record')
+        lines=[f"Research status: {final['status']}. Execution: {final['execution_status']}.",
+               f"Stopped at {final['stopped_at']}; natural episodes: {final.get('natural_episodes','not recorded')}.",
+               final['reason']]
+        lines.extend(f'{stage}: {status}' for stage,status in final.get('milestones',{}).items())
+        lines.extend([f"Detailed report: {final['report_path']}",
+                      'Recorded evidence only; this report does not authorize another collection or establish production safety.'])
+        return '\n'.join(lines)+'\n'
     if not (root / "core.json").exists():
         return "M0: unexecuted. No simulation evidence.\n\nM1–M6: unexecuted.\n"
     result = read_json(root / "core.json")
