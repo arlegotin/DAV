@@ -1,23 +1,26 @@
 cff-version: 1.2.0
-message: "If you reuse this software, benchmark, or negative result, cite this repository and the exact commit."
+message: "If you build on this software, findings, or ideas, please cite this repository and the exact commit used."
 type: software
-title: "depverify: Dependency-aware verification for coding agents"
+title: "DAV: Dependency-aware verification for coding agents"
 authors:
   - family-names: Legotin
     given-names: Artem
 version: 0.1.0
-license: MIT
+license:
+  - AGPL-3.0-only
+  - CC-BY-4.0
 repository-code: "https://github.com/arlegotin/DAV"
 url: "https://github.com/arlegotin/DAV"
 abstract: >-
-  A finite evidence-acquisition planner, masked replay harness, and bounded
-  coding-agent verification experiment. Two separate pilots ended with
-  INCONCLUSIVE and NO_GO results. Public tests were useful in the fresh pilot,
-  while the proposed dependency-aware mechanism lacked acquisition headroom.
-  No fitted or held-out mechanism advantage is claimed.
+  An exact evidence-acquisition planner and replayable coding-agent
+  verification study. Two separate pilots ended inconclusive and no-go. The
+  fresh pilot supported a simpler test-only workflow within a small sample; no
+  fitted or held-out advantage of dependency-aware acquisition was
+  established.
 keywords:
-  - verification
   - coding agents
+  - verification
+  - correlated evidence
   - evidence acquisition
-  - correlated errors
+  - negative results
   - reproducibility

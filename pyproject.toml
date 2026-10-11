@@ -7,8 +7,9 @@ name = "depverify"
 version = "0.1.0"
 description = "Dependency-aware evidence acquisition and replay for coding-agent verification"
 readme = "README.md"
-license = "MIT"
-authors = [{name = "depverify contributors"}]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "NOTICE", "LICENSING.md", "LICENSES/*.txt"]
+authors = [{name = "Artem Legotin"}]
 requires-python = ">=3.11"
 dependencies = ["numpy", "scipy"]
 
